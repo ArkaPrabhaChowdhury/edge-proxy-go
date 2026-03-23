@@ -1,0 +1,119 @@
+{
+	"Print to console": {
+		"prefix": "pl",
+		"body": [
+			"fmt.Println($1)"
+		],
+		"description": "fmt.Println snippet"
+	},
+	"Printf to console": {
+		"prefix": "pf",
+		"body": [
+			"fmt.Printf(\"$1\\n\", $2)"
+		],
+		"description": "fmt.Printf snippet"
+	},
+	"Error handle": {
+		"prefix": "err",
+		"body": [
+			"if err != nil {",
+			"\t$0",
+			"}"
+		],
+		"description": "Generic error handling snippet"
+	},
+	"Error handle with return": {
+		"prefix": "errr",
+		"body": [
+			"if err != nil {",
+			"\treturn err",
+			"}"
+		],
+		"description": "Error handling with return"
+	},
+	"Error handle with log": {
+		"prefix": "errl",
+		"body": [
+			"if err != nil {",
+			"\tfmt.Println(\"Error:\", err)",
+			"\t$0",
+			"}"
+		],
+		"description": "Error handling with fmt.Println"
+	},
+	"Main function": {
+		"prefix": "main",
+		"body": [
+			"func main() {",
+			"\t$0",
+			"}"
+		],
+		"description": "Main function snippet"
+	},
+	"TCP Listen": {
+		"prefix": "listen",
+		"body": [
+			"listener, err := net.Listen(\"tcp\", \":${1:8080}\")",
+			"if err != nil {",
+			"\tfmt.Println(\"Listen error:\", err)",
+			"\treturn",
+			"}",
+			"defer listener.Close()",
+			"fmt.Printf(\"Listening on %s\\n\", listener.Addr())",
+			"",
+			"for {",
+			"\tconn, err := listener.Accept()",
+			"\tif err != nil {",
+			"\t\tfmt.Println(\"Accept error:\", err)",
+			"\t\tcontinue",
+			"\t}",
+			"\tgo handleConnection(conn)",
+			"}"
+		],
+		"description": "TCP Listener loop snippet"
+	},
+	"Connection Handler": {
+		"prefix": "hand",
+		"body": [
+			"func handleConnection(conn net.Conn) {",
+			"\tdefer conn.Close()",
+			"\t$0",
+			"}"
+		],
+		"description": "TCP connection handler function"
+	},
+	"Read String": {
+		"prefix": "read",
+		"body": [
+			"reader := bufio.NewReader(${1:conn})",
+			"line, err := reader.ReadString('\\n')",
+			"if err != nil {",
+			"\t$0",
+			"}"
+		],
+		"description": "bufio.ReadString snippet"
+	},
+	"JSON Struct Tag": {
+		"prefix": "json",
+		"body": [
+			"`json:\"${1:fieldname}\"`"
+		],
+		"description": "JSON struct tag"
+	},
+	"HTTP Response": {
+		"prefix": "resp",
+		"body": [
+			"response := fmt.Sprintf(",
+			"\t\"HTTP/1.1 200 OK\\r\\n\"+",
+			"\t\t\"Content-Type: text/plain\\r\\n\"+",
+			"\t\t\"Content-Length: %d\\r\\n\"+",
+			"\t\t\"\\r\\n\"+",
+			"\t\t\"%s\",",
+			"\tlen(${1:body}),",
+			"\t${1:body},",
+			")",
+			"conn.Write([]byte(response))"
+		],
+		"description": "Manual HTTP response snippet"
+	}
+}

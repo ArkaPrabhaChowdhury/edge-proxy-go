@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  proxy:
+    build: .
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    depends_on:
+      - backend1
+      - backend2
+      - backend3
+
+  backend1:
+    build: .
+    command: ./backend :9000
+    ports:
+      - "9000:9000"
+
+  backend2:
+    build: .
+    command: ./backend :9001
+    ports:
+      - "9001:9001"
+
+  backend3:
+    build: .
+    command: ./backend :9002
+    ports:
+      - "9002:9002"

@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>go-proxy dashboard</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:       #0c0c0d;
+  --surface:  #141415;
+  --surface2: #1c1c1e;
+  --surface3: #242426;
+  --border:   rgba(255,255,255,0.07);
+  --text:     #e2e2df;
+  --muted:    #7a7a76;
+  --hint:     #484845;
+  --green:    #1D9E75;
+  --amber:    #EF9F27;
+  --red:      #E24B4A;
+  --blue:     #378ADD;
+  --r: 8px; --rl: 12px;
+  font-family: 'JetBrains Mono','Fira Code','Cascadia Code',ui-monospace,monospace;
+}
+body { background: var(--bg); color: var(--text); min-height: 100vh; }
+.shell { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
+.hdr { display: flex; align-items: center; gap: 12px; margin-bottom: 1.75rem; }
+.hdr-title { font-size: 14px; font-weight: 500; letter-spacing: 0.05em; }
+.hdr-sub { font-size: 11px; color: var(--hint); margin-left: auto; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--hint); flex-shrink: 0; transition: background 0.4s; }
+.dot.ok  { background: var(--green); box-shadow: 0 0 5px var(--green); }
+.dot.err { background: var(--red); }
+.stats-row { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; margin-bottom: 12px; }
+.stat { background: var(--surface); border: 0.5px solid var(--border); border-radius: var(--r); padding: 0.85rem 1rem; }
+.stat-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: 7px; }
+.stat-val { font-size: 26px; font-weight: 500; color: var(--text); }
+.mid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 10px; margin-bottom: 12px; }
+.panel { background: var(--surface); border: 0.5px solid var(--border); border-radius: var(--rl); padding: 1rem 1.25rem; }
+.panel-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: 0.85rem; }
+.ip-row { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
+.ip-addr { font-size: 11px; color: var(--text); min-width: 110px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar-track { flex: 1; height: 4px; background: var(--surface3); border-radius: 2px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 2px; transition: width 0.6s ease, background 0.6s ease; }
+.bar-fill.safe { background: var(--green); }
+.bar-fill.warn { background: var(--amber); }
+.bar-fill.over { background: var(--red); }
+.ip-count { font-size: 11px; color: var(--muted); min-width: 36px; text-align: right; }
+.no-data { font-size: 11px; color: var(--hint); padding: 6px 0; }
+.spark-wrap { display: flex; align-items: flex-end; gap: 3px; height: 56px; }
+.s-bar { flex: 1; border-radius: 2px 2px 0 0; border-top: 1px solid var(--blue); background: rgba(55,138,221,0.13); transition: height 0.35s ease; min-height: 3px; }
+.s-bar.hot { border-top-color: var(--red); background: rgba(226,75,74,0.13); }
+.log-scroll { height: 200px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--surface3) transparent; }
+.log-row { display: grid; grid-template-columns: 58px 42px 1fr 36px 42px 100px; gap: 8px; font-size: 11px; line-height: 1.95; border-bottom: 0.5px solid transparent; }
+.log-row:hover { border-bottom-color: var(--border); }
+.l-ts,.l-ms,.l-ip { color: var(--hint); }
+.l-method { color: var(--blue); }
+.l-path { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.l-200 { color: var(--green); }
+.l-429 { color: var(--red); }
+@media (max-width:620px) {
+  .stats-row { grid-template-columns: 1fr 1fr; }
+  .mid { grid-template-columns: 1fr; }
+  .log-row { grid-template-columns: 54px 36px 1fr 34px; }
+  .l-ms,.l-ip { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="hdr">
+    <div class="dot" id="dot"></div>
+    <span class="hdr-title">go-proxy / rate-limiter</span>
+    <span class="hdr-sub" id="status-text">connecting…</span>
+  </div>
+  <div class="stats-row">
+    <div class="stat"><div class="stat-lbl">total requests</div><div class="stat-val" id="s-total">—</div></div>
+    <div class="stat"><div class="stat-lbl">rate limited (429)</div><div class="stat-val" id="s-429" style="color:var(--red)">—</div></div>
+    <div class="stat"><div class="stat-lbl">active conns</div><div class="stat-val" id="s-conns">—</div></div>
+    <div class="stat"><div class="stat-lbl">window / limit</div><div class="stat-val" style="color:var(--green);font-size:18px">10s / 5</div></div>
+  </div>
+  <div class="mid">
+    <div class="panel">
+      <div class="panel-lbl">per-ip count (sliding window)</div>
+      <div id="ip-bars"><div class="no-data">awaiting data…</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-lbl">requests / sec (last 24s)</div>
+      <div class="spark-wrap" id="sparkline"></div>
+    </div>
+  </div>
+  <div class="panel" style="margin-bottom:12px">
+    <div class="panel-lbl">send request to proxy</div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <select id="req-method" style="font-size:11px;font-family:inherit;background:var(--surface3);color:var(--text);border:0.5px solid var(--border2);border-radius:var(--r);padding:5px 8px;cursor:pointer">
+        <option>GET</option>
+        <option>POST</option>
+      </select>
+      <select id="req-path" style="font-size:11px;font-family:inherit;background:var(--surface3);color:var(--text);border:0.5px solid var(--border2);border-radius:var(--r);padding:5px 8px;cursor:pointer">
+        <option>/hello</option>
+        <option>/home</option>
+        <option>/api/data</option>
+      </select>
+      <button id="send-btn" onclick="sendRequest()" style="font-size:11px;font-family:inherit;background:transparent;color:var(--text);border:0.5px solid var(--border2);border-radius:var(--r);padding:5px 14px;cursor:pointer">send</button>
+      <button onclick="sendBurst()" style="font-size:11px;font-family:inherit;background:transparent;color:var(--amber);border:0.5px solid rgba(239,159,39,0.35);border-radius:var(--r);padding:5px 14px;cursor:pointer">burst x8</button>
+      <span id="req-result" style="font-size:11px;color:var(--hint);margin-left:4px"></span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-lbl">access log</div>
+    <div class="log-scroll" id="log-box"></div>
+  </div>
+</div>
+<script>
+/*
+  How this works — dead simple:
+  1. Every 1000ms, call fetch('http://localhost:8081/stats')
+  2. Go proxy returns a JSON snapshot of everything
+  3. Re-render the page from that data
+  No WebSockets, no streaming, no special protocol.
+*/
+
+const STATS_URL = 'http://localhost:8081/stats';
+const LIMIT = 5;
+
+let sparkData = Array(24).fill(0);
+let prevTotal = 0;
+let seenKeys  = new Set();
+
+// Init sparkline
+document.getElementById('sparkline').innerHTML =
+  sparkData.map(() => '<div class="s-bar" style="height:3px"></div>').join('');
+
+// ── Poll every second ─────────────────────────────────────────────────────────
+async function poll() {
+  try {
+    const res  = await fetch(STATS_URL);
+    const data = await res.json();
+    render(data);
+    setStatus('ok', 'live · ' + new Date().toLocaleTimeString());
+  } catch (e) {
+    setStatus('err', 'cannot reach :8081 — is the proxy running?');
+  }
+}
+
+setInterval(poll, 1000);
+poll();
+
+// ── Render snapshot ───────────────────────────────────────────────────────────
+function render(data) {
+  document.getElementById('s-total').textContent = data.total_requests ?? '—';
+  document.getElementById('s-429').textContent   = data.total_limited  ?? '—';
+  document.getElementById('s-conns').textContent = data.active_conns   ?? '—';
+
+  renderIPBars(data.ip_counts || {});
+
+  const delta = (data.total_requests || 0) - prevTotal;
+  prevTotal = data.total_requests || 0;
+  updateSpark(delta);
+
+  renderLog(data.log || []);
+}
+
+// ── IP bars ───────────────────────────────────────────────────────────────────
+function renderIPBars(ipCounts) {
+  const el = document.getElementById('ip-bars');
+  const entries = Object.entries(ipCounts).filter(([,v]) => v > 0);
+  entries.sort((a, b) => b[1] - a[1]);
+  if (!entries.length) {
+    el.innerHTML = '<div class="no-data">no active IPs in window</div>';
+    return;
+  }
+  el.innerHTML = entries.map(([ip, cnt]) => {
+    const pct = Math.min(cnt / LIMIT * 100, 100).toFixed(1);
+    const cls = cnt >= LIMIT ? 'over' : cnt >= 3 ? 'warn' : 'safe';
+    return `<div class="ip-row">
+      <span class="ip-addr">${ip}</span>
+      <div class="bar-track"><div class="bar-fill ${cls}" style="width:${pct}%"></div></div>
+      <span class="ip-count">${cnt}/${LIMIT}</span>
+    </div>`;
+  }).join('');
+}
+
+// ── Sparkline ─────────────────────────────────────────────────────────────────
+function updateSpark(delta) {
+  sparkData.push(delta);
+  sparkData.shift();
+  const max = Math.max(...sparkData, 1);
+  document.querySelectorAll('#sparkline .s-bar').forEach((bar, i) => {
+    const h = Math.max(Math.round(sparkData[i] / max * 100), 3);
+    bar.style.height = h + '%';
+    bar.className = 's-bar' + (h > 70 ? ' hot' : '');
+  });
+}
+
+// ── Log ───────────────────────────────────────────────────────────────────────
+function renderLog(entries) {
+  const box = document.getElementById('log-box');
+
+  // First paint: show last 20 entries
+  if (seenKeys.size === 0 && entries.length > 0) {
+    entries.slice(-20).forEach(e => {
+      seenKeys.add(rowKey(e));
+      box.appendChild(makeRow(e));
+    });
+    box.scrollTop = box.scrollHeight;
+    return;
+  }
+
+  // Subsequent polls: only prepend new entries
+  entries.forEach(e => {
+    const k = rowKey(e);
+    if (!seenKeys.has(k)) {
+      seenKeys.add(k);
+      box.prepend(makeRow(e));
+    }
+  });
+
+  // Keep DOM and set lean
+  while (box.children.length > 150) box.removeChild(box.lastChild);
+  if (seenKeys.size > 500) seenKeys = new Set([...seenKeys].slice(-300));
+}
+
+function rowKey(e) { return e.time + e.ip + e.path + e.status; }
+
+function makeRow(e) {
+  const row = document.createElement('div');
+  row.className = 'log-row';
+  const sc = e.status === 200 ? 'l-200' : 'l-429';
+  row.innerHTML =
+    `<span class="l-ts">${e.time}</span>` +
+    `<span class="l-method">${e.method || '-'}</span>` +
+    `<span class="l-path">${e.path || '-'}</span>` +
+    `<span class="${sc}">${e.status}</span>` +
+    `<span class="l-ms">${e.latency_ms}ms</span>` +
+    `<span class="l-ip">${e.ip}</span>`;
+  return row;
+}
+
+function setStatus(state, text) {
+  document.getElementById('dot').className = 'dot ' + (state === 'ok' ? 'ok' : 'err');
+  document.getElementById('status-text').textContent = text;
+}
+
+// ── Send request button ───────────────────────────────────────────────────────
+// Fires a real fetch() to the proxy at :8080.
+// The proxy handles it, records it in stats, and the next poll() will show it.
+async function sendRequest() {
+  const method = document.getElementById('req-method').value;
+  const path   = document.getElementById('req-path').value;
+  const result = document.getElementById('req-result');
+  const btn    = document.getElementById('send-btn');
+
+  btn.disabled = true;
+  result.style.color = 'var(--hint)';
+  result.textContent = 'sending…';
+
+  try {
+    const res = await fetch('http://localhost:8080' + path, { method });
+    const ok  = res.status === 200;
+    result.style.color = ok ? 'var(--green)' : 'var(--red)';
+    result.textContent = res.status + ' ' + (ok ? 'OK' : 'Too Many Requests');
+    // Immediate poll so the dashboard reflects the new request right away
+    await poll();
+  } catch (e) {
+    result.style.color = 'var(--red)';
+    result.textContent = 'error — is proxy running on :8080?';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Fires 8 requests in quick succession to trigger rate limiting
+async function sendBurst() {
+  for (let i = 0; i < 8; i++) {
+    await sendRequest();
+    await new Promise(r => setTimeout(r, 80));
+  }
+}
+</script>
+</body>
+</html>
