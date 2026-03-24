@@ -50,18 +50,19 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; }
 .s-bar { flex: 1; border-radius: 2px 2px 0 0; border-top: 1px solid var(--blue); background: rgba(55,138,221,0.13); transition: height 0.35s ease; min-height: 3px; }
 .s-bar.hot { border-top-color: var(--red); background: rgba(226,75,74,0.13); }
 .log-scroll { height: 200px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--surface3) transparent; }
-.log-row { display: grid; grid-template-columns: 58px 42px 1fr 36px 42px 100px; gap: 8px; font-size: 11px; line-height: 1.95; border-bottom: 0.5px solid transparent; }
+.log-row { display: grid; grid-template-columns: 58px 42px 1fr 90px 36px 42px 100px; gap: 8px; font-size: 11px; line-height: 1.95; border-bottom: 0.5px solid transparent; }
 .log-row:hover { border-bottom-color: var(--border); }
 .l-ts,.l-ms,.l-ip { color: var(--hint); }
 .l-method { color: var(--blue); }
 .l-path { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .l-200 { color: var(--green); }
 .l-429 { color: var(--red); }
+.l-backend { color: var(--amber); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width:620px) {
   .stats-row { grid-template-columns: 1fr 1fr; }
   .mid { grid-template-columns: 1fr; }
   .log-row { grid-template-columns: 54px 36px 1fr 34px; }
-  .l-ms,.l-ip { display: none; }
+  .l-ms,.l-ip,.l-backend { display: none; }
 }
 </style>
 </head>
@@ -231,6 +232,7 @@ function makeRow(e) {
     `<span class="l-ts">${e.time}</span>` +
     `<span class="l-method">${e.method || '-'}</span>` +
     `<span class="l-path">${e.path || '-'}</span>` +
+    `<span class="l-backend">${e.backend || '-'}</span>` +
     `<span class="${sc}">${e.status}</span>` +
     `<span class="l-ms">${e.latency_ms}ms</span>` +
     `<span class="l-ip">${e.ip}</span>`;

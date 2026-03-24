@@ -40,6 +40,7 @@ type LogEntry struct {
 	Path      string `json:"path"`
 	Status    int    `json:"status"`
 	LatencyMs int64  `json:"latency_ms"`
+	Backend   string `json:"backend"`
 }
 
 type StatsResponse struct {
@@ -182,6 +183,7 @@ func handleConnection(conn net.Conn) {
 			Path:      "-",
 			Status:    429,
 			LatencyMs: time.Since(start).Milliseconds(),
+			Backend:   "-",
 		})
 		statsMu.Unlock()
 		return
@@ -254,6 +256,7 @@ func handleConnection(conn net.Conn) {
 		Path:      path,
 		Status:    200,
 		LatencyMs: time.Since(start).Milliseconds(),
+		Backend:   port,
 	})
 	statsMu.Unlock()
 }
