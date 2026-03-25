@@ -121,7 +121,7 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; }
   No WebSockets, no streaming, no special protocol.
 */
 
-const STATS_URL = 'http://localhost:8081/stats';
+const STATS_URL = '/stats';
 const LIMIT = 5;
 
 let sparkData = Array(24).fill(0);
@@ -140,7 +140,7 @@ async function poll() {
     render(data);
     setStatus('ok', 'live · ' + new Date().toLocaleTimeString());
   } catch (e) {
-    setStatus('err', 'cannot reach :8081 — is the proxy running?');
+    setStatus('err', 'cannot reach /stats — check server console');
   }
 }
 
@@ -258,7 +258,8 @@ async function sendRequest() {
   result.textContent = 'sending…';
 
   try {
-    const res = await fetch('http://localhost:8080' + path, { method });
+    const PROXY_URL = location.protocol + '//' + location.hostname + ':8080';
+    const res = await fetch(PROXY_URL + path, { method });
     const ok  = res.status === 200;
     result.style.color = ok ? 'var(--green)' : 'var(--red)';
     result.textContent = res.status + ' ' + (ok ? 'OK' : 'Too Many Requests');
