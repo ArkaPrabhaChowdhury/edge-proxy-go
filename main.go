@@ -32,6 +32,35 @@ var totalLimited  int64
 var activeConns   int64
 var accessLog     []LogEntry // last 100 entries
 
+func normalizePort(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return v
+	}
+	if strings.HasPrefix(v, ":") {
+		return v
+	}
+	return ":" + v
+}
+
+func getProxyPort() string {
+	if v := os.Getenv("PROXY_PORT"); strings.TrimSpace(v) != "" {
+		return normalizePort(v)
+	}
+	if v := os.Getenv("PORT"); strings.TrimSpace(v) != "" {
+		return normalizePort(v)
+	}
+	return ":8080"
+}
+
+func getStatsPort() string {
+	if v := os.Getenv("STATS_PORT"); strings.TrimSpace(v) != "" {
+		return normalizePort(v)
+	}
+	return ":8081"
+}
+
+
 func getBackends() []string {
 	if env := strings.TrimSpace(os.Getenv("BACKENDS")); env != "" {
 		parts := strings.Split(env, ",")
@@ -77,23 +106,31 @@ type StatsResponse struct {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 func main() {
+	// Optional: run local backends in-process (single-service deployments)
+	if strings.TrimSpace(os.Getenv("INPROC_BACKENDS")) == "1" {
+		startLocalBackend(":9000")
+		startLocalBackend(":9001")
+		startLocalBackend(":9002")
+	}
+
 	// HTTP server: serves /stats as JSON and dashboard.html at /
 	go func() {
 		http.HandleFunc("/stats", statsHandler)
 		http.HandleFunc("/", fileHandler)
 		fmt.Println("Stats server on :8081  →  visit http://localhost:8081")
-		if err := http.ListenAndServe(":8081", nil); err != nil {
+		if err := http.ListenAndServe(statsPort, nil); err != nil {
 			fmt.Println("Stats server error:", err)
 		}
 	}()
 
 	// TCP proxy
-	listener, err := net.Listen("tcp", ":8080")
+	proxyPort := getProxyPort()
+	listener, err := net.Listen("tcp", proxyPort)
 	if err != nil {
 		fmt.Println("Proxy listen error:", err)
 		return
 	}
-	fmt.Println("Proxy listening on :8080")
+	fmt.Printf("Proxy listening on %s\n", proxyPort)
 
 	for {
 		conn, err := listener.Accept()

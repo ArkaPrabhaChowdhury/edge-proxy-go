@@ -51,6 +51,11 @@ go run backend.go :9002
 go run main.go
 ```
 
+You can override the backend pool with `BACKENDS` if needed:
+```bash
+BACKENDS=localhost:9000,localhost:9001,localhost:9002 go run main.go
+```
+
 ### 3. (Optional) Run with Docker Compose
 If you want to run the entire stack (Proxy + 3 Backends) in containers:
 ```bash
@@ -74,7 +79,7 @@ Current limits are defined in `main.go`:
 - **Window**: 10 seconds
 - **Proxy Port**: 8080
 - **Stats Port**: 8081
-- **Backend Pool**: `:9000`, `:9001`, `:9002`
+- **Backend Pool**: defaults to `localhost:9000`, `localhost:9001`, `localhost:9002` (override with `BACKENDS`)
 
 ---
 

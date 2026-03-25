@@ -10,6 +10,8 @@ services:
       - backend1
       - backend2
       - backend3
+    environment:
+      - BACKENDS=backend1:9000,backend2:9001,backend3:9002
 
   backend1:
     build: .
