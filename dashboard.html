@@ -115,7 +115,7 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; }
 <script>
 /*
   How this works — dead simple:
-  1. Every 1000ms, call fetch('http://localhost:8081/stats')
+  1. Every 1000ms, call fetch('/stats') on the same origin
   2. Go proxy returns a JSON snapshot of everything
   3. Re-render the page from that data
   No WebSockets, no streaming, no special protocol.
@@ -258,8 +258,7 @@ async function sendRequest() {
   result.textContent = 'sending…';
 
   try {
-    const PROXY_URL = location.protocol + '//' + location.hostname + ':8080';
-    const res = await fetch(PROXY_URL + path, { method });
+    const res = await fetch(path, { method });
     const ok  = res.status === 200;
     result.style.color = ok ? 'var(--green)' : 'var(--red)';
     result.textContent = res.status + ' ' + (ok ? 'OK' : 'Too Many Requests');
@@ -267,7 +266,7 @@ async function sendRequest() {
     await poll();
   } catch (e) {
     result.style.color = 'var(--red)';
-    result.textContent = 'error — is proxy running on :8080?';
+    result.textContent = 'error — proxy unreachable';
   } finally {
     btn.disabled = false;
   }

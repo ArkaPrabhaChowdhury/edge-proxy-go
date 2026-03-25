@@ -22,15 +22,20 @@ const (
 
 // ── Shared state ──────────────────────────────────────────────────────────────
 
-var mu sync.Mutex
-var ipMap = make(map[string][]int64) // IP → request timestamps in current window
-var current= 0
+var (
+	mu      sync.Mutex
+	ipMap   = make(map[string][]int64) // IP → request timestamps in current window
+	current = 0
+	backends []string // resolved once at startup
 
-var statsMu       sync.Mutex
-var totalRequests int64
-var totalLimited  int64
-var activeConns   int64
-var accessLog     []LogEntry // last 100 entries
+	statsMu       sync.Mutex
+	totalRequests int64
+	totalLimited  int64
+	activeConns   int64
+	accessLog     []LogEntry // last 100 entries
+)
+
+// ── Port helpers ──────────────────────────────────────────────────────────────
 
 func normalizePort(v string) string {
 	v = strings.TrimSpace(v)
@@ -43,29 +48,26 @@ func normalizePort(v string) string {
 	return ":" + v
 }
 
-func getProxyPort() string {
-	if v := os.Getenv("PROXY_PORT"); strings.TrimSpace(v) != "" {
-		return normalizePort(v)
-	}
-	if v := os.Getenv("PORT"); strings.TrimSpace(v) != "" {
+func getPort() string {
+	// Railway (and most PaaS) injects PORT; honour it for the proxy.
+	if v := strings.TrimSpace(os.Getenv("PORT")); v != "" {
 		return normalizePort(v)
 	}
 	return ":8080"
 }
 
 func getStatsPort() string {
-	if v := os.Getenv("STATS_PORT"); strings.TrimSpace(v) != "" {
+	if v := strings.TrimSpace(os.Getenv("STATS_PORT")); v != "" {
 		return normalizePort(v)
 	}
 	return ":8081"
 }
 
-
-func getBackends() []string {
+// resolveBackends is called once at startup.
+func resolveBackends() []string {
 	if env := strings.TrimSpace(os.Getenv("BACKENDS")); env != "" {
-		parts := strings.Split(env, ",")
 		var out []string
-		for _, p := range parts {
+		for _, p := range strings.Split(env, ",") {
 			p = strings.TrimSpace(p)
 			if p != "" {
 				out = append(out, p)
@@ -75,7 +77,6 @@ func getBackends() []string {
 			return out
 		}
 	}
-
 	return []string{
 		"localhost:9000",
 		"localhost:9001",
@@ -106,6 +107,8 @@ type StatsResponse struct {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 func main() {
+	backends = resolveBackends()
+
 	// Optional: run local backends in-process (single-service deployments)
 	if strings.TrimSpace(os.Getenv("INPROC_BACKENDS")) == "1" {
 		startLocalBackend(":9000")
@@ -113,19 +116,21 @@ func main() {
 		startLocalBackend(":9002")
 	}
 
-	// HTTP server: serves /stats as JSON and dashboard.html at /
+	proxyPort := getPort()
+	statsPort := getStatsPort()
+
+	// HTTP server: serves /stats as JSON and the dashboard at /
 	go func() {
-		http.HandleFunc("/stats", statsHandler)
-		http.HandleFunc("/", fileHandler)
-		statsPort := getStatsPort()
-		fmt.Printf("Stats server on %s  ->  visit http://localhost%s\n", statsPort, statsPort)
-		if err := http.ListenAndServe(statsPort, nil); err != nil {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/stats", statsHandler)
+		mux.HandleFunc("/", dashboardHTTPHandler)
+		fmt.Printf("Stats/dashboard HTTP server on %s\n", statsPort)
+		if err := http.ListenAndServe(statsPort, mux); err != nil {
 			fmt.Println("Stats server error:", err)
 		}
 	}()
 
 	// TCP proxy
-	proxyPort := getProxyPort()
 	listener, err := net.Listen("tcp", proxyPort)
 	if err != nil {
 		fmt.Println("Proxy listen error:", err)
@@ -143,16 +148,10 @@ func main() {
 	}
 }
 
-// ── /stats handler ────────────────────────────────────────────────────────────
-//
-// Dashboard calls GET http://localhost:8081/stats every second.
-// Returns a JSON snapshot of all current state.
+// ── Stats helpers ─────────────────────────────────────────────────────────────
 
-func statsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*") // allow file:// origin
-	w.Header().Set("Content-Type", "application/json")
-
-	// Compute per-IP counts within the current sliding window
+// buildStats computes the current stats snapshot (caller must NOT hold locks).
+func buildStats() StatsResponse {
 	mu.Lock()
 	ipCounts := make(map[string]int)
 	cutoff := time.Now().Unix() - window
@@ -170,21 +169,34 @@ func statsHandler(w http.ResponseWriter, r *http.Request) {
 	mu.Unlock()
 
 	statsMu.Lock()
-	resp := StatsResponse{
+	defer statsMu.Unlock()
+	return StatsResponse{
 		TotalRequests: totalRequests,
 		TotalLimited:  totalLimited,
 		ActiveConns:   activeConns,
 		IPCounts:      ipCounts,
 		Log:           accessLog,
 	}
-	statsMu.Unlock()
-
-	json.NewEncoder(w).Encode(resp)
 }
 
-// Serve dashboard.html when visiting http://localhost:8081
-func fileHandler(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, "dashboard.html")
+// ── HTTP handlers (stats port) ────────────────────────────────────────────────
+
+func statsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(buildStats())
+}
+
+func dashboardHTTPHandler(w http.ResponseWriter, r *http.Request) {
+	// Resolve dashboard.html relative to the binary's location so it works
+	// regardless of the current working directory.
+	exe, err := os.Executable()
+	if err != nil {
+		http.Error(w, "cannot resolve binary path", http.StatusInternalServerError)
+		return
+	}
+	dir := exe[:strings.LastIndex(exe, string(os.PathSeparator))]
+	http.ServeFile(w, r, dir+string(os.PathSeparator)+"dashboard.html")
 }
 
 // ── Proxy connection handler ──────────────────────────────────────────────────
@@ -209,7 +221,56 @@ func handleConnection(conn net.Conn) {
 
 	start := time.Now()
 
-	// ── Rate limit check ──────────────────────────────────────────────────────
+	// ── Parse request line FIRST ──────────────────────────────────────────────
+	// We must know the path before deciding whether to rate-limit, so that
+	// internal routes (/stats, /favicon.ico, /) never consume a rate-limit
+	// slot and never appear in the access log.
+	reader := bufio.NewReader(conn)
+
+	requestLine, err := reader.ReadString('\n')
+	if err != nil {
+		return // client closed before sending anything
+	}
+
+	parts := strings.Split(requestLine, " ")
+	if len(parts) < 3 {
+		return
+	}
+	method := strings.TrimSpace(parts[0])
+	path := strings.TrimSpace(parts[1])
+
+	// ── Internal routes — no rate-limit, no log ───────────────────────────────
+	if method == "GET" && path == "/stats" {
+		readRequestHeaders(reader)
+		serveStatsTCP(conn)
+		return
+	}
+	if method == "GET" && path == "/favicon.ico" {
+		readRequestHeaders(reader)
+		fmt.Fprintf(conn, "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+		return
+	}
+
+	// ── Serve dashboard ───────────────────────────────────────────────────────
+	if method == "GET" && (path == "/" || path == "/index.html") {
+		readRequestHeaders(reader)
+		serveDashboard(conn)
+		statsMu.Lock()
+		totalRequests++
+		appendLog(LogEntry{
+			Time:      time.Now().Format("15:04:05"),
+			IP:        host,
+			Method:    method,
+			Path:      path,
+			Status:    200,
+			LatencyMs: time.Since(start).Milliseconds(),
+			Backend:   "dashboard",
+		})
+		statsMu.Unlock()
+		return
+	}
+
+	// ── Rate limit check (only for real backend traffic) ─────────────────────
 	mu.Lock()
 	now := time.Now().Unix()
 	cutoff := now - window
@@ -240,8 +301,8 @@ func handleConnection(conn net.Conn) {
 		appendLog(LogEntry{
 			Time:      time.Now().Format("15:04:05"),
 			IP:        host,
-			Method:    "-",
-			Path:      "-",
+			Method:    method,
+			Path:      path,
 			Status:    429,
 			LatencyMs: time.Since(start).Milliseconds(),
 			Backend:   "-",
@@ -254,61 +315,8 @@ func handleConnection(conn net.Conn) {
 	ipMap[host] = active
 	mu.Unlock()
 
-	// ── Forward to backend ────────────────────────────────────────────────────
-	reader := bufio.NewReader(conn)
-
-	requestLine, err := reader.ReadString('\n')
-	if err != nil {
-		fmt.Println("Read error:", err)
-		return
-	}
-
-	parts := strings.Split(requestLine, " ")
-	if len(parts) < 3 {
-		fmt.Println("Invalid HTTP request line")
-		return
-	}
-	method := strings.TrimSpace(parts[0])
-	path := strings.TrimSpace(parts[1])
-
-	// Serve dashboard and stats directly on the proxy port
-	if method == "GET" && (path == "/" || path == "/index.html") {
-		readRequestHeaders(reader)
-		serveDashboard(conn)
-		statsMu.Lock()
-		totalRequests++
-		appendLog(LogEntry{
-			Time:      time.Now().Format("15:04:05"),
-			IP:        host,
-			Method:    method,
-			Path:      path,
-			Status:    200,
-			LatencyMs: time.Since(start).Milliseconds(),
-			Backend:   "dashboard",
-		})
-		statsMu.Unlock()
-		return
-	}
-	if method == "GET" && path == "/stats" {
-		readRequestHeaders(reader)
-		serveStats(conn)
-		statsMu.Lock()
-		totalRequests++
-		appendLog(LogEntry{
-			Time:      time.Now().Format("15:04:05"),
-			IP:        host,
-			Method:    method,
-			Path:      path,
-			Status:    200,
-			LatencyMs: time.Since(start).Milliseconds(),
-			Backend:   "stats",
-		})
-		statsMu.Unlock()
-		return
-	}
-
+	// ── Forward to backend (round-robin) ─────────────────────────────────────
 	mu.Lock()
-	backends := getBackends()
 	if len(backends) == 0 {
 		mu.Unlock()
 		return
@@ -324,10 +332,10 @@ func handleConnection(conn net.Conn) {
 		body := "Bad Gateway"
 		fmt.Fprintf(conn,
 			"HTTP/1.1 502 Bad Gateway\r\n"+
-			"Content-Type: text/plain\r\n"+
-			"Access-Control-Allow-Origin: *\r\n"+
-			"Content-Length: %d\r\n"+
-			"\r\n%s",
+				"Content-Type: text/plain\r\n"+
+				"Access-Control-Allow-Origin: *\r\n"+
+				"Content-Length: %d\r\n"+
+				"\r\n%s",
 			len(body), body,
 		)
 		return
@@ -371,6 +379,8 @@ func appendLog(entry LogEntry) {
 	}
 }
 
+// ── Local in-process backends ─────────────────────────────────────────────────
+
 func startLocalBackend(port string) {
 	listener, err := net.Listen("tcp", port)
 	if err != nil {
@@ -410,7 +420,7 @@ func handleBackendConnection(conn net.Conn, port string) {
 
 	path := reqArr[1]
 
-	body := fmt.Sprintf("Hello from %s", port)
+	body := "Hello from " + port
 	if path == "/hello" {
 		body = "Hey! How are you?"
 	} else if path == "/home" {
@@ -419,11 +429,11 @@ func handleBackendConnection(conn net.Conn, port string) {
 
 	response := fmt.Sprintf(
 		"HTTP/1.1 200 OK\r\n"+
-		"Content-Type: text/plain\r\n"+
-		"Access-Control-Allow-Origin: *\r\n"+
-		"Content-Length: %d\r\n"+
-		"\r\n"+
-		"%s",
+			"Content-Type: text/plain\r\n"+
+			"Access-Control-Allow-Origin: *\r\n"+
+			"Content-Length: %d\r\n"+
+			"\r\n"+
+			"%s",
 		len(body),
 		body,
 	)
@@ -431,16 +441,12 @@ func handleBackendConnection(conn net.Conn, port string) {
 	conn.Write([]byte(response))
 }
 
+// ── TCP-level response helpers ────────────────────────────────────────────────
 
 func readRequestHeaders(reader *bufio.Reader) {
 	for {
-		line, err := reader.ReadString('
-')
-		if err != nil {
-			return
-		}
-		if line == "
-" {
+		line, err := reader.ReadString('\n')
+		if err != nil || line == "\r\n" {
 			return
 		}
 	}
@@ -451,77 +457,37 @@ func serveDashboard(conn net.Conn) {
 	if err != nil {
 		body := "Dashboard not found"
 		fmt.Fprintf(conn,
-			"HTTP/1.1 500 Internal Server Error
-"+
-				"Content-Type: text/plain
-"+
-				"Access-Control-Allow-Origin: *
-"+
-				"Content-Length: %d
-"+
-				"
-%s",
+			"HTTP/1.1 500 Internal Server Error\r\n"+
+				"Content-Type: text/plain\r\n"+
+				"Access-Control-Allow-Origin: *\r\n"+
+				"Content-Length: %d\r\n"+
+				"\r\n%s",
 			len(body), body,
 		)
 		return
 	}
 
 	fmt.Fprintf(conn,
-		"HTTP/1.1 200 OK
-"+
-			"Content-Type: text/html; charset=utf-8
-"+
-			"Access-Control-Allow-Origin: *
-"+
-			"Content-Length: %d
-"+
-			"
-",
+		"HTTP/1.1 200 OK\r\n"+
+			"Content-Type: text/html; charset=utf-8\r\n"+
+			"Access-Control-Allow-Origin: *\r\n"+
+			"Content-Length: %d\r\n"+
+			"\r\n",
 		len(content),
 	)
 	conn.Write(content)
 }
 
-func serveStats(conn net.Conn) {
-	// Build the same payload as statsHandler
-	mu.Lock()
-	ipCounts := make(map[string]int)
-	cutoff := time.Now().Unix() - window
-	for ip, timestamps := range ipMap {
-		count := 0
-		for _, t := range timestamps {
-			if t > cutoff {
-				count++
-			}
-		}
-		if count > 0 {
-			ipCounts[ip] = count
-		}
-	}
-	mu.Unlock()
-
-	statsMu.Lock()
-	resp := StatsResponse{
-		TotalRequests: totalRequests,
-		TotalLimited:  totalLimited,
-		ActiveConns:   activeConns,
-		IPCounts:      ipCounts,
-		Log:           accessLog,
-	}
-	statsMu.Unlock()
-
+// serveStatsTCP writes the stats JSON payload directly over a raw TCP conn.
+func serveStatsTCP(conn net.Conn) {
+	resp := buildStats()
 	payload, _ := json.Marshal(resp)
 	fmt.Fprintf(conn,
-		"HTTP/1.1 200 OK
-"+
-			"Content-Type: application/json
-"+
-			"Access-Control-Allow-Origin: *
-"+
-			"Content-Length: %d
-"+
-			"
-",
+		"HTTP/1.1 200 OK\r\n"+
+			"Content-Type: application/json\r\n"+
+			"Access-Control-Allow-Origin: *\r\n"+
+			"Content-Length: %d\r\n"+
+			"\r\n",
 		len(payload),
 	)
 	conn.Write(payload)
