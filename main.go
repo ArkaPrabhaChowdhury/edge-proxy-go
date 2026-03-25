@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,28 @@ var totalRequests int64
 var totalLimited  int64
 var activeConns   int64
 var accessLog     []LogEntry // last 100 entries
+
+func getBackends() []string {
+	if env := strings.TrimSpace(os.Getenv("BACKENDS")); env != "" {
+		parts := strings.Split(env, ",")
+		var out []string
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				out = append(out, p)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+
+	return []string{
+		"localhost:9000",
+		"localhost:9001",
+		"localhost:9002",
+	}
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -211,22 +234,28 @@ func handleConnection(conn net.Conn) {
 	path := strings.TrimSpace(parts[1])
 
 	mu.Lock()
-	backends := []string{
-		"backend1:9000",
-		"backend2:9001",
-		"backend3:9002",
+	backends := getBackends()
+	if len(backends) == 0 {
+		mu.Unlock()
+		return
 	}
-
-
-	port:= backends[current]
-	current++
-	current = current % len(backends)
+	port := backends[current]
+	current = (current + 1) % len(backends)
 	mu.Unlock()
 
 	backendConn, err := net.Dial("tcp", port)
 	fmt.Println("Routing to", port)
 	if err != nil {
 		fmt.Println("Backend dial error:", err)
+		body := "Bad Gateway"
+		fmt.Fprintf(conn,
+			"HTTP/1.1 502 Bad Gateway\r\n"+
+			"Content-Type: text/plain\r\n"+
+			"Access-Control-Allow-Origin: *\r\n"+
+			"Content-Length: %d\r\n"+
+			"\r\n%s",
+			len(body), body,
+		)
 		return
 	}
 	defer backendConn.Close()
