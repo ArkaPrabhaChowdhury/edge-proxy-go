@@ -117,7 +117,8 @@ func main() {
 	go func() {
 		http.HandleFunc("/stats", statsHandler)
 		http.HandleFunc("/", fileHandler)
-		fmt.Println("Stats server on :8081  →  visit http://localhost:8081")
+		statsPort := getStatsPort()
+		fmt.Printf("Stats server on %s  ->  visit http://localhost%s\n", statsPort, statsPort)
 		if err := http.ListenAndServe(statsPort, nil); err != nil {
 			fmt.Println("Stats server error:", err)
 		}
@@ -332,4 +333,64 @@ func appendLog(entry LogEntry) {
 	if len(accessLog) > 100 {
 		accessLog = accessLog[len(accessLog)-100:]
 	}
+}
+
+func startLocalBackend(port string) {
+	listener, err := net.Listen("tcp", port)
+	if err != nil {
+		fmt.Println("Backend listen error:", err)
+		return
+	}
+	fmt.Printf("Backend listening on %s\n", listener.Addr())
+
+	go func() {
+		defer listener.Close()
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				fmt.Println("Backend accept error:", err)
+				continue
+			}
+			go handleBackendConnection(conn, port)
+		}
+	}()
+}
+
+func handleBackendConnection(conn net.Conn, port string) {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+
+	request, err := reader.ReadString('\n')
+	if err != nil {
+		fmt.Println("Backend read error:", err)
+		return
+	}
+
+	reqArr := strings.Split(request, " ")
+	if len(reqArr) < 3 {
+		fmt.Println("Invalid HTTP request")
+		return
+	}
+
+	path := reqArr[1]
+
+	body := fmt.Sprintf("Hello from %s", port)
+	if path == "/hello" {
+		body = "Hey! How are you?"
+	} else if path == "/home" {
+		body = "This is the home page"
+	}
+
+	response := fmt.Sprintf(
+		"HTTP/1.1 200 OK\r\n"+
+		"Content-Type: text/plain\r\n"+
+		"Access-Control-Allow-Origin: *\r\n"+
+		"Content-Length: %d\r\n"+
+		"\r\n"+
+		"%s",
+		len(body),
+		body,
+	)
+
+	conn.Write([]byte(response))
 }
