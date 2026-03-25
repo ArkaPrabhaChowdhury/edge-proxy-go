@@ -271,6 +271,42 @@ func handleConnection(conn net.Conn) {
 	method := strings.TrimSpace(parts[0])
 	path := strings.TrimSpace(parts[1])
 
+	// Serve dashboard and stats directly on the proxy port
+	if method == "GET" && (path == "/" || path == "/index.html") {
+		readRequestHeaders(reader)
+		serveDashboard(conn)
+		statsMu.Lock()
+		totalRequests++
+		appendLog(LogEntry{
+			Time:      time.Now().Format("15:04:05"),
+			IP:        host,
+			Method:    method,
+			Path:      path,
+			Status:    200,
+			LatencyMs: time.Since(start).Milliseconds(),
+			Backend:   "dashboard",
+		})
+		statsMu.Unlock()
+		return
+	}
+	if method == "GET" && path == "/stats" {
+		readRequestHeaders(reader)
+		serveStats(conn)
+		statsMu.Lock()
+		totalRequests++
+		appendLog(LogEntry{
+			Time:      time.Now().Format("15:04:05"),
+			IP:        host,
+			Method:    method,
+			Path:      path,
+			Status:    200,
+			LatencyMs: time.Since(start).Milliseconds(),
+			Backend:   "stats",
+		})
+		statsMu.Unlock()
+		return
+	}
+
 	mu.Lock()
 	backends := getBackends()
 	if len(backends) == 0 {
@@ -393,4 +429,100 @@ func handleBackendConnection(conn net.Conn, port string) {
 	)
 
 	conn.Write([]byte(response))
+}
+
+
+func readRequestHeaders(reader *bufio.Reader) {
+	for {
+		line, err := reader.ReadString('
+')
+		if err != nil {
+			return
+		}
+		if line == "
+" {
+			return
+		}
+	}
+}
+
+func serveDashboard(conn net.Conn) {
+	content, err := os.ReadFile("dashboard.html")
+	if err != nil {
+		body := "Dashboard not found"
+		fmt.Fprintf(conn,
+			"HTTP/1.1 500 Internal Server Error
+"+
+				"Content-Type: text/plain
+"+
+				"Access-Control-Allow-Origin: *
+"+
+				"Content-Length: %d
+"+
+				"
+%s",
+			len(body), body,
+		)
+		return
+	}
+
+	fmt.Fprintf(conn,
+		"HTTP/1.1 200 OK
+"+
+			"Content-Type: text/html; charset=utf-8
+"+
+			"Access-Control-Allow-Origin: *
+"+
+			"Content-Length: %d
+"+
+			"
+",
+		len(content),
+	)
+	conn.Write(content)
+}
+
+func serveStats(conn net.Conn) {
+	// Build the same payload as statsHandler
+	mu.Lock()
+	ipCounts := make(map[string]int)
+	cutoff := time.Now().Unix() - window
+	for ip, timestamps := range ipMap {
+		count := 0
+		for _, t := range timestamps {
+			if t > cutoff {
+				count++
+			}
+		}
+		if count > 0 {
+			ipCounts[ip] = count
+		}
+	}
+	mu.Unlock()
+
+	statsMu.Lock()
+	resp := StatsResponse{
+		TotalRequests: totalRequests,
+		TotalLimited:  totalLimited,
+		ActiveConns:   activeConns,
+		IPCounts:      ipCounts,
+		Log:           accessLog,
+	}
+	statsMu.Unlock()
+
+	payload, _ := json.Marshal(resp)
+	fmt.Fprintf(conn,
+		"HTTP/1.1 200 OK
+"+
+			"Content-Type: application/json
+"+
+			"Access-Control-Allow-Origin: *
+"+
+			"Content-Length: %d
+"+
+			"
+",
+		len(payload),
+	)
+	conn.Write(payload)
 }
