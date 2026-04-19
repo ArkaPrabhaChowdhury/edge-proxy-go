@@ -1,0 +1,15 @@
+# Compiled binaries
+proxy
+backend
+edge-proxy-go
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# Local config (keep the example, ignore the actual)
+config.yaml
+*.pem
