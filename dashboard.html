@@ -62,7 +62,7 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; }
 .be-badge.down { background: rgba(226,75,74,0.15); color: var(--red); }
 /* Access log */
 .log-scroll { height: 200px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--surface3) transparent; }
-.log-row { display: grid; grid-template-columns: 58px 42px 1fr 90px 36px 42px 100px; gap: 8px; font-size: 11px; line-height: 1.95; border-bottom: 0.5px solid transparent; }
+.log-row { display: grid; grid-template-columns: 58px 42px 1fr 160px 36px 42px 100px; gap: 8px; font-size: 11px; line-height: 1.95; border-bottom: 0.5px solid transparent; }
 .log-row:hover { border-bottom-color: var(--border); }
 .l-ts,.l-ms,.l-ip { color: var(--hint); }
 .l-method { color: var(--blue); }
@@ -70,7 +70,7 @@ body { background: var(--bg); color: var(--text); min-height: 100vh; }
 .l-200 { color: var(--green); }
 .l-429 { color: var(--red); }
 .l-5xx { color: var(--amber); }
-.l-backend { color: var(--amber); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.l-backend { color: var(--amber); overflow: visible; text-overflow: clip; white-space: nowrap; }
 @media (max-width:620px) {
   .stats-row { grid-template-columns: 1fr 1fr; }
   .mid { grid-template-columns: 1fr; }
