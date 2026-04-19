@@ -4,30 +4,54 @@ services:
   proxy:
     build: .
     ports:
-      - "8080:8080"
-      - "8081:8081"
+      - "8080:8080"   # proxy
+      - "8081:8081"   # dashboard + metrics
     depends_on:
-      - backend1
-      - backend2
-      - backend3
+      backend1: { condition: service_healthy }
+      backend2: { condition: service_healthy }
+      backend3: { condition: service_healthy }
     environment:
       - BACKENDS=backend1:9000,backend2:9001,backend3:9002
       - STATS_PORT=8081
+      # Uncomment to enable dashboard password protection:
+      # - DASHBOARD_PASS=secret
+      # Uncomment to enable TLS on the proxy port:
+      # - TLS_CERT=/certs/cert.pem
+      # - TLS_KEY=/certs/key.pem
+    # Mount a custom config file if needed:
+    # volumes:
+    #   - ./config.yaml:/app/config.yaml:ro
+    restart: unless-stopped
 
   backend1:
     build: .
     command: ["./backend", ":9000"]
-    ports:
-      - "9000:9000"
+    expose: ["9000"]
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 9000 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
 
   backend2:
     build: .
     command: ["./backend", ":9001"]
-    ports:
-      - "9001:9001"
+    expose: ["9001"]
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 9001 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
 
   backend3:
     build: .
     command: ["./backend", ":9002"]
-    ports:
-      - "9002:9002"
+    expose: ["9002"]
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 9002 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped

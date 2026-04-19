@@ -1,0 +1,33 @@
+# edge-proxy configuration
+# Copy this file to config.yaml and edit as needed.
+# All values have sensible defaults — only set what you need to change.
+# Every field can also be set via environment variable (takes precedence).
+
+proxy:
+  port: "8080"          # env: PORT
+  tls:
+    enabled: false
+    cert_file: "cert.pem"   # env: TLS_CERT
+    key_file:  "key.pem"    # env: TLS_KEY
+
+stats:
+  port: "8081"          # env: STATS_PORT
+  auth:
+    enabled: false      # set DASHBOARD_PASS to auto-enable
+    username: "admin"   # env: DASHBOARD_USER
+    password: "changeme" # env: DASHBOARD_PASS
+
+# Comma-separated list of backend addresses.  env: BACKENDS
+backends:
+  - "localhost:9000"
+  - "localhost:9001"
+  - "localhost:9002"
+
+rate_limit:
+  requests: 5           # max requests per IP per window
+  window_seconds: 10    # sliding window size in seconds
+
+health_check:
+  enabled: true
+  interval_seconds: 10  # how often to probe each backend
+  timeout_seconds: 2    # TCP dial timeout per probe
