@@ -17,14 +17,10 @@ import (
 	"time"
 )
 
-// ── Shared state ──────────────────────────────────────────────────────────────
-
 var (
 	cfg  *Config
 	pool *backendPool
-
-	mu    sync.Mutex
-	ipMap = make(map[string][]int64)
+	rl   *rateLimiter
 
 	statsMu       sync.Mutex
 	totalRequests int64
@@ -32,8 +28,6 @@ var (
 	activeConns   int64
 	accessLog     []LogEntry
 )
-
-// ── Types ─────────────────────────────────────────────────────────────────────
 
 type LogEntry struct {
 	Time      string `json:"time"`
@@ -46,8 +40,13 @@ type LogEntry struct {
 }
 
 type RateLimitInfo struct {
-	Requests      int `json:"requests"`
-	WindowSeconds int `json:"window_seconds"`
+	Requests              int     `json:"requests"`
+	WindowSeconds         int     `json:"window_seconds"`
+	IdentifierHeader      string  `json:"identifier_header"`
+	BaseRequestsPerSecond float64 `json:"base_requests_per_second"`
+	BurstCapacity         float64 `json:"burst_capacity"`
+	BlockSeconds          int     `json:"block_seconds"`
+	RedisAddr             string  `json:"redis_addr"`
 }
 
 type StatsResponse struct {
@@ -60,8 +59,6 @@ type StatsResponse struct {
 	Log           []LogEntry      `json:"log"`
 }
 
-// ── Entry point ───────────────────────────────────────────────────────────────
-
 func main() {
 	var err error
 	cfg, err = loadConfig("config.yaml")
@@ -71,8 +68,12 @@ func main() {
 	}
 
 	pool = newBackendPool(cfg.Backends)
+	rl = newRateLimiter(cfg.RateLimit)
+	if err := rl.ping(context.Background()); err != nil {
+		fmt.Fprintln(os.Stderr, "redis error:", err)
+		os.Exit(1)
+	}
 
-	// Optional: start local backends inside the same process (demo / single-binary mode).
 	if strings.TrimSpace(os.Getenv("INPROC_BACKENDS")) == "1" {
 		startLocalBackend(":9000")
 		startLocalBackend(":9001")
@@ -95,9 +96,9 @@ func main() {
 	if cfg.Proxy.TLS.Enabled {
 		scheme = "https"
 	}
-	fmt.Printf("Proxy     → %s://localhost%s\n", scheme, cfg.Proxy.Port)
-	fmt.Printf("Dashboard → http://localhost%s\n", cfg.Stats.Port)
-	fmt.Printf("Metrics   → http://localhost%s/metrics\n", cfg.Stats.Port)
+	fmt.Printf("Proxy     -> %s://localhost%s\n", scheme, cfg.Proxy.Port)
+	fmt.Printf("Dashboard -> http://localhost%s\n", cfg.Stats.Port)
+	fmt.Printf("Metrics   -> http://localhost%s/metrics\n", cfg.Stats.Port)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
@@ -118,15 +119,14 @@ func main() {
 	}()
 
 	<-stop
-	fmt.Println("\nshutting down gracefully…")
+	fmt.Println("\nshutting down gracefully...")
 
-	listener.Close()
+	_ = listener.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	statsServer.Shutdown(ctx)
+	_ = statsServer.Shutdown(ctx)
 
-	// Wait up to 30 s for in-flight connections to drain.
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		statsMu.Lock()
@@ -140,7 +140,6 @@ func main() {
 	fmt.Println("done.")
 }
 
-// startListener opens a TCP (or TLS) listener on the configured proxy port.
 func startListener() (net.Listener, error) {
 	if cfg.Proxy.TLS.Enabled {
 		cert, err := tls.LoadX509KeyPair(cfg.Proxy.TLS.CertFile, cfg.Proxy.TLS.KeyFile)
@@ -154,11 +153,13 @@ func startListener() (net.Listener, error) {
 	return net.Listen("tcp", cfg.Proxy.Port)
 }
 
-// startStatsServer launches the HTTP server for the dashboard, /stats, and /metrics.
 func startStatsServer() *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/stats", statsHandler)
 	mux.HandleFunc("/metrics", metricsHandler)
+	mux.HandleFunc("/top-abusers", topAbusersHandler)
+	mux.HandleFunc("/traffic-spikes", trafficSpikesHandler)
+	mux.HandleFunc("/rate-limit-events", rateLimitEventsHandler)
 	mux.HandleFunc("/", dashboardHandler)
 
 	var handler http.Handler = mux
@@ -187,24 +188,17 @@ func basicAuth(next http.Handler, username, password string) http.Handler {
 	})
 }
 
-// ── Stats helpers ─────────────────────────────────────────────────────────────
-
 func buildStats() StatsResponse {
-	mu.Lock()
-	ipCounts := make(map[string]int)
-	cutoff := time.Now().Unix() - int64(cfg.RateLimit.WindowSeconds)
-	for ip, timestamps := range ipMap {
-		count := 0
-		for _, t := range timestamps {
-			if t > cutoff {
-				count++
+	ipCounts := map[string]int{}
+	if abusers, err := rl.TopAbusers(context.Background(), int64(cfg.RateLimit.TopN)); err == nil {
+		for _, abuser := range abusers {
+			label := abuser.Identifier
+			if label == "" {
+				label = abuser.User
 			}
-		}
-		if count > 0 {
-			ipCounts[ip] = count
+			ipCounts[label] = abuser.AbuseCount
 		}
 	}
-	mu.Unlock()
 
 	statsMu.Lock()
 	defer statsMu.Unlock()
@@ -215,19 +209,22 @@ func buildStats() StatsResponse {
 		IPCounts:      ipCounts,
 		Backends:      pool.status(),
 		RateLimit: RateLimitInfo{
-			Requests:      cfg.RateLimit.Requests,
-			WindowSeconds: cfg.RateLimit.WindowSeconds,
+			Requests:              cfg.RateLimit.Requests,
+			WindowSeconds:         cfg.RateLimit.SlidingWindowSeconds,
+			IdentifierHeader:      cfg.RateLimit.IdentifierHeader,
+			BaseRequestsPerSecond: cfg.RateLimit.BaseRequestsPerSecond,
+			BurstCapacity:         cfg.RateLimit.BurstCapacity,
+			BlockSeconds:          cfg.RateLimit.BlockSeconds,
+			RedisAddr:             cfg.RateLimit.Redis.Addr,
 		},
 		Log: accessLog,
 	}
 }
 
-// ── HTTP handlers (stats port) ────────────────────────────────────────────────
-
 func statsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(buildStats())
+	_ = json.NewEncoder(w).Encode(buildStats())
 }
 
 func metricsHandler(w http.ResponseWriter, r *http.Request) {
@@ -249,7 +246,7 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# HELP edgeproxy_requests_total Total requests proxied\n")
 	fmt.Fprintf(w, "# TYPE edgeproxy_requests_total counter\n")
 	fmt.Fprintf(w, "edgeproxy_requests_total %d\n\n", total)
-	fmt.Fprintf(w, "# HELP edgeproxy_rate_limited_total Requests rejected by rate limiter\n")
+	fmt.Fprintf(w, "# HELP edgeproxy_rate_limited_total Requests blocked by the limiter\n")
 	fmt.Fprintf(w, "# TYPE edgeproxy_rate_limited_total counter\n")
 	fmt.Fprintf(w, "edgeproxy_rate_limited_total %d\n\n", limited)
 	fmt.Fprintf(w, "# HELP edgeproxy_active_connections Current open proxy connections\n")
@@ -263,6 +260,39 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "edgeproxy_total_backends %d\n", len(statuses))
 }
 
+func topAbusersHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Type", "application/json")
+	payload, err := rl.TopAbusers(r.Context(), int64(cfg.RateLimit.TopN))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func trafficSpikesHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Type", "application/json")
+	payload, err := rl.TrafficSpikes(r.Context(), int64(cfg.RateLimit.TopN))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func rateLimitEventsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Type", "application/json")
+	payload, err := rl.RateLimitEvents(r.Context(), int64(cfg.RateLimit.TopN))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
 func dashboardHandler(w http.ResponseWriter, r *http.Request) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -272,8 +302,6 @@ func dashboardHandler(w http.ResponseWriter, r *http.Request) {
 	dir := exe[:strings.LastIndex(exe, string(os.PathSeparator))]
 	http.ServeFile(w, r, dir+string(os.PathSeparator)+"dashboard.html")
 }
-
-// ── Proxy connection handler ──────────────────────────────────────────────────
 
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
@@ -294,7 +322,6 @@ func handleConnection(conn net.Conn) {
 
 	start := time.Now()
 	reader := bufio.NewReader(conn)
-
 	requestLine, err := reader.ReadString('\n')
 	if err != nil {
 		return
@@ -306,81 +333,77 @@ func handleConnection(conn net.Conn) {
 	}
 	method := strings.TrimSpace(parts[0])
 	path := strings.TrimSpace(parts[1])
+	headers, rawHeaders := readRequestHeaders(reader)
 
-	// Internal routes — bypass rate limiting and backend forwarding.
 	switch {
 	case method == "GET" && path == "/stats":
-		readRequestHeaders(reader)
 		serveStatsTCP(conn)
 		return
 	case method == "GET" && path == "/metrics":
-		readRequestHeaders(reader)
 		serveMetricsTCP(conn)
 		return
+	case method == "GET" && path == "/top-abusers":
+		serveJSONTCP(conn, topAbusersPayload())
+		return
+	case method == "GET" && path == "/traffic-spikes":
+		serveJSONTCP(conn, trafficSpikesPayload())
+		return
+	case method == "GET" && path == "/rate-limit-events":
+		serveJSONTCP(conn, rateLimitEventsPayload())
+		return
 	case method == "GET" && path == "/favicon.ico":
-		readRequestHeaders(reader)
 		fmt.Fprintf(conn, "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
 		return
 	case method == "GET" && (path == "/" || path == "/index.html"):
-		readRequestHeaders(reader)
 		serveDashboard(conn)
-		statsMu.Lock()
-		totalRequests++
-		appendLog(LogEntry{
-			Time: time.Now().Format("15:04:05"), IP: host,
-			Method: method, Path: path, Status: 200,
-			LatencyMs: time.Since(start).Milliseconds(), Backend: "dashboard",
-		})
-		statsMu.Unlock()
+		recordRequest(LogEntry{
+			Time:      time.Now().Format("15:04:05"),
+			IP:        host,
+			Method:    method,
+			Path:      path,
+			Status:    200,
+			LatencyMs: time.Since(start).Milliseconds(),
+			Backend:   "dashboard",
+		}, false)
 		return
 	}
 
-	// ── Rate limit ────────────────────────────────────────────────────────────
-	mu.Lock()
-	now := time.Now().Unix()
-	cutoff := now - int64(cfg.RateLimit.WindowSeconds)
-
-	var active []int64
-	for _, t := range ipMap[host] {
-		if t > cutoff {
-			active = append(active, t)
-		}
+	user, identifier := identifyRequester(host, headers)
+	decision, err := rl.Evaluate(context.Background(), user, identifier)
+	if err != nil {
+		body := "Rate limiter unavailable"
+		fmt.Fprintf(conn,
+			"HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s",
+			len(body), body,
+		)
+		return
 	}
-
-	if len(active) >= cfg.RateLimit.Requests {
-		mu.Unlock()
+	if decision.Action == ActionThrottle && decision.ThrottleDelay > 0 {
+		time.Sleep(time.Duration(decision.ThrottleDelay) * time.Millisecond)
+	}
+	if decision.Action == ActionBlock {
 		body := "Rate limit exceeded"
 		fmt.Fprintf(conn,
-			"HTTP/1.1 429 Too Many Requests\r\n"+
-				"Content-Type: text/plain\r\n"+
-				"Retry-After: %d\r\n"+
-				"Content-Length: %d\r\n\r\n%s",
-			cfg.RateLimit.WindowSeconds, len(body), body,
+			"HTTP/1.1 429 Too Many Requests\r\nContent-Type: text/plain\r\nRetry-After: %d\r\nX-RateLimit-Reason: %s\r\nContent-Length: %d\r\n\r\n%s",
+			decision.RetryAfter, decision.Reason, len(body), body,
 		)
-		statsMu.Lock()
-		totalRequests++
-		totalLimited++
-		appendLog(LogEntry{
-			Time: time.Now().Format("15:04:05"), IP: host,
-			Method: method, Path: path, Status: 429,
-			LatencyMs: time.Since(start).Milliseconds(), Backend: "-",
-		})
-		statsMu.Unlock()
+		recordRequest(LogEntry{
+			Time:      time.Now().Format("15:04:05"),
+			IP:        user,
+			Method:    method,
+			Path:      path,
+			Status:    429,
+			LatencyMs: time.Since(start).Milliseconds(),
+			Backend:   "-",
+		}, true)
 		return
 	}
 
-	active = append(active, now)
-	ipMap[host] = active
-	mu.Unlock()
-
-	// ── Forward to backend ────────────────────────────────────────────────────
 	backend := pool.next()
 	if backend == "" {
 		body := "No healthy backends available"
 		fmt.Fprintf(conn,
-			"HTTP/1.1 503 Service Unavailable\r\n"+
-				"Content-Type: text/plain\r\n"+
-				"Content-Length: %d\r\n\r\n%s",
+			"HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s",
 			len(body), body,
 		)
 		return
@@ -390,38 +413,39 @@ func handleConnection(conn net.Conn) {
 	if err != nil {
 		body := "Bad Gateway"
 		fmt.Fprintf(conn,
-			"HTTP/1.1 502 Bad Gateway\r\n"+
-				"Content-Type: text/plain\r\n"+
-				"Content-Length: %d\r\n\r\n%s",
+			"HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s",
 			len(body), body,
 		)
 		return
 	}
 	defer backendConn.Close()
 
-	// Replay the request line + headers to the backend.
-	backendConn.Write([]byte(requestLine))
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return
-		}
-		backendConn.Write([]byte(line))
-		if line == "\r\n" {
-			break
-		}
+	_, _ = backendConn.Write([]byte(requestLine))
+	for _, line := range rawHeaders {
+		_, _ = backendConn.Write([]byte(line))
 	}
 
-	io.Copy(conn, backendConn)
+	_, _ = io.Copy(conn, backendConn)
 
+	recordRequest(LogEntry{
+		Time:      time.Now().Format("15:04:05"),
+		IP:        user,
+		Method:    method,
+		Path:      path,
+		Status:    200,
+		LatencyMs: time.Since(start).Milliseconds(),
+		Backend:   backend,
+	}, false)
+}
+
+func recordRequest(entry LogEntry, limited bool) {
 	statsMu.Lock()
+	defer statsMu.Unlock()
 	totalRequests++
-	appendLog(LogEntry{
-		Time: time.Now().Format("15:04:05"), IP: host,
-		Method: method, Path: path, Status: 200,
-		LatencyMs: time.Since(start).Milliseconds(), Backend: backend,
-	})
-	statsMu.Unlock()
+	if limited {
+		totalLimited++
+	}
+	appendLog(entry)
 }
 
 func appendLog(entry LogEntry) {
@@ -430,8 +454,6 @@ func appendLog(entry LogEntry) {
 		accessLog = accessLog[len(accessLog)-100:]
 	}
 }
-
-// ── Local in-process backends (demo / single-binary mode) ────────────────────
 
 func startLocalBackend(port string) {
 	listener, err := net.Listen("tcp", port)
@@ -476,13 +498,21 @@ func handleBackendConnection(conn net.Conn, port string) {
 	)
 }
 
-// ── TCP-level response helpers ────────────────────────────────────────────────
-
-func readRequestHeaders(reader *bufio.Reader) {
+func readRequestHeaders(reader *bufio.Reader) (map[string]string, []string) {
+	headers := make(map[string]string)
+	var lines []string
 	for {
 		line, err := reader.ReadString('\n')
-		if err != nil || line == "\r\n" {
-			return
+		if err != nil {
+			return headers, lines
+		}
+		lines = append(lines, line)
+		if line == "\r\n" {
+			return headers, lines
+		}
+		parts := strings.SplitN(strings.TrimSpace(line), ":", 2)
+		if len(parts) == 2 {
+			headers[strings.ToLower(strings.TrimSpace(parts[0]))] = strings.TrimSpace(parts[1])
 		}
 	}
 }
@@ -501,16 +531,20 @@ func serveDashboard(conn net.Conn) {
 		"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: %d\r\n\r\n",
 		len(content),
 	)
-	conn.Write(content)
+	_, _ = conn.Write(content)
 }
 
 func serveStatsTCP(conn net.Conn) {
 	payload, _ := json.Marshal(buildStats())
+	serveJSONTCP(conn, payload)
+}
+
+func serveJSONTCP(conn net.Conn, payload []byte) {
 	fmt.Fprintf(conn,
 		"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n",
 		len(payload),
 	)
-	conn.Write(payload)
+	_, _ = conn.Write(payload)
 }
 
 func serveMetricsTCP(conn net.Conn) {
@@ -540,4 +574,39 @@ func serveMetricsTCP(conn net.Conn) {
 		"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s",
 		len(body), body,
 	)
+}
+
+func identifyRequester(host string, headers map[string]string) (string, string) {
+	key := strings.ToLower(cfg.RateLimit.IdentifierHeader)
+	if value := strings.TrimSpace(headers[key]); value != "" {
+		return "api_key:" + value, value
+	}
+	return "ip:" + host, host
+}
+
+func topAbusersPayload() []byte {
+	data, err := rl.TopAbusers(context.Background(), int64(cfg.RateLimit.TopN))
+	if err != nil {
+		return []byte(`[]`)
+	}
+	payload, _ := json.Marshal(data)
+	return payload
+}
+
+func trafficSpikesPayload() []byte {
+	data, err := rl.TrafficSpikes(context.Background(), int64(cfg.RateLimit.TopN))
+	if err != nil {
+		return []byte(`[]`)
+	}
+	payload, _ := json.Marshal(data)
+	return payload
+}
+
+func rateLimitEventsPayload() []byte {
+	data, err := rl.RateLimitEvents(context.Background(), int64(cfg.RateLimit.TopN))
+	if err != nil {
+		return []byte(`[]`)
+	}
+	payload, _ := json.Marshal(data)
+	return payload
 }

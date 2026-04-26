@@ -7,12 +7,14 @@ services:
       - "8080:8080"   # proxy
       - "8081:8081"   # dashboard + metrics
     depends_on:
+      redis: { condition: service_started }
       backend1: { condition: service_healthy }
       backend2: { condition: service_healthy }
       backend3: { condition: service_healthy }
     environment:
       - BACKENDS=backend1:9000,backend2:9001,backend3:9002
       - STATS_PORT=8081
+      - REDIS_ADDR=redis:6379
       # Uncomment to enable dashboard password protection:
       # - DASHBOARD_PASS=secret
       # Uncomment to enable TLS on the proxy port:
@@ -21,6 +23,11 @@ services:
     # Mount a custom config file if needed:
     # volumes:
     #   - ./config.yaml:/app/config.yaml:ro
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    expose: ["6379"]
     restart: unless-stopped
 
   backend1:
