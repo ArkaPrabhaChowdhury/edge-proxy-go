@@ -3,307 +3,1661 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>edge-proxy dashboard</title>
+<meta name="description" content="edge-proxy is a hackable Go reverse proxy with live rate limiting, backend control, metrics, and tracing.">
+<meta property="og:title" content="edge-proxy | Hackable Go edge control">
+<meta property="og:description" content="A small self-hosted gateway for rate limits, backend routing, health checks, and operational visibility.">
+<title>edge-proxy | Hackable Go edge control</title>
 <style>
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-:root {
-  --bg:       #0c0c0d;
-  --surface:  #141415;
-  --surface2: #1c1c1e;
-  --surface3: #242426;
-  --border:   rgba(255,255,255,0.07);
-  --text:     #e2e2df;
-  --muted:    #7a7a76;
-  --hint:     #484845;
-  --green:    #1D9E75;
-  --amber:    #EF9F27;
-  --red:      #E24B4A;
-  --blue:     #378ADD;
-  --r: 8px; --rl: 12px;
-  font-family: 'JetBrains Mono','Fira Code','Cascadia Code',ui-monospace,monospace;
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
-body { background: var(--bg); color: var(--text); min-height: 100vh; }
-.shell { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
-.hdr { display: flex; align-items: center; gap: 12px; margin-bottom: 1.75rem; }
-.hdr-title { font-size: 14px; font-weight: 500; letter-spacing: 0.05em; }
-.hdr-sub { font-size: 11px; color: var(--hint); margin-left: auto; }
-.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--hint); flex-shrink: 0; transition: background 0.4s; }
-.dot.ok  { background: var(--green); box-shadow: 0 0 5px var(--green); }
-.dot.err { background: var(--red); }
-.stats-row { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; margin-bottom: 12px; }
-.stat { background: var(--surface); border: 0.5px solid var(--border); border-radius: var(--r); padding: 0.85rem 1rem; }
-.stat-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: 7px; }
-.stat-val { font-size: 26px; font-weight: 500; color: var(--text); }
-.mid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 10px; margin-bottom: 12px; }
-.panel { background: var(--surface); border: 0.5px solid var(--border); border-radius: var(--rl); padding: 1rem 1.25rem; }
-.panel-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: 0.85rem; }
-/* IP bars */
-.ip-row { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
-.ip-addr { font-size: 11px; color: var(--text); min-width: 110px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bar-track { flex: 1; height: 4px; background: var(--surface3); border-radius: 2px; overflow: hidden; }
-.bar-fill { height: 100%; border-radius: 2px; transition: width 0.6s ease, background 0.6s ease; }
-.bar-fill.safe { background: var(--green); }
-.bar-fill.warn { background: var(--amber); }
-.bar-fill.over { background: var(--red); }
-.ip-count { font-size: 11px; color: var(--muted); min-width: 36px; text-align: right; }
-.no-data { font-size: 11px; color: var(--hint); padding: 6px 0; }
-/* Sparkline */
-.spark-wrap { display: flex; align-items: flex-end; gap: 3px; height: 56px; }
-.s-bar { flex: 1; border-radius: 2px 2px 0 0; border-top: 1px solid var(--blue); background: rgba(55,138,221,0.13); transition: height 0.35s ease; min-height: 3px; }
-.s-bar.hot { border-top-color: var(--red); background: rgba(226,75,74,0.13); }
-/* Backends */
-.be-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.be-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-.be-dot.up   { background: var(--green); box-shadow: 0 0 4px var(--green); }
-.be-dot.down { background: var(--red); }
-.be-addr { font-size: 11px; color: var(--text); flex: 1; }
-.be-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; }
-.be-badge.up   { background: rgba(29,158,117,0.15); color: var(--green); }
-.be-badge.down { background: rgba(226,75,74,0.15); color: var(--red); }
-/* Access log */
-.log-scroll { height: 200px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--surface3) transparent; }
-.log-row { display: grid; grid-template-columns: 58px 42px 1fr 160px 36px 42px 100px; gap: 8px; font-size: 11px; line-height: 1.95; border-bottom: 0.5px solid transparent; }
-.log-row:hover { border-bottom-color: var(--border); }
-.l-ts,.l-ms,.l-ip { color: var(--hint); }
-.l-method { color: var(--blue); }
-.l-path { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.l-200 { color: var(--green); }
-.l-429 { color: var(--red); }
-.l-5xx { color: var(--amber); }
-.l-backend { color: var(--amber); overflow: visible; text-overflow: clip; white-space: nowrap; }
-@media (max-width:620px) {
-  .stats-row { grid-template-columns: 1fr 1fr; }
-  .mid { grid-template-columns: 1fr; }
-  .log-row { grid-template-columns: 54px 36px 1fr 34px; }
-  .l-ms,.l-ip,.l-backend { display: none; }
+
+:root {
+  --bg: #05090d;
+  --bg-2: #080e13;
+  --surface: #0c1218;
+  --surface-2: #111a21;
+  --surface-3: #162129;
+  --line: #23323a;
+  --line-soft: rgba(139, 164, 171, 0.2);
+  --text: #dce9ed;
+  --text-strong: #f4fbfd;
+  --muted: #8da1a8;
+  --muted-2: #60747d;
+  --accent: #2dd4bf;
+  --accent-dark: #0f766e;
+  --warn: #ffb86b;
+  --err: #ff6f73;
+  --ok: #43d18d;
+  --shadow: 0 26px 80px rgba(0, 0, 0, 0.34);
+  --radius: 8px;
+  --mono: "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas, ui-monospace, monospace;
+  --sans: "Aptos", "IBM Plex Sans", "Plus Jakarta Sans", "Helvetica Neue", sans-serif;
+  --display: "Bahnschrift", "Aptos Display", "IBM Plex Sans Condensed", "Plus Jakarta Sans", sans-serif;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--text);
+  font-family: var(--sans);
+  background:
+    linear-gradient(90deg, rgba(45, 212, 191, 0.035) 1px, transparent 1px),
+    linear-gradient(rgba(45, 212, 191, 0.025) 1px, transparent 1px),
+    radial-gradient(circle at 82% 4%, rgba(45, 212, 191, 0.13), transparent 25rem),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 48%, #04070a 100%);
+  background-size: 48px 48px, 48px 48px, auto, auto;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.16;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E");
+  mix-blend-mode: screen;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+select,
+input,
+textarea {
+  color: var(--text);
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.skip-link {
+  position: absolute;
+  left: 16px;
+  top: -48px;
+  z-index: 20;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: #04100e;
+  font-weight: 700;
+}
+
+.skip-link:focus {
+  top: 16px;
+}
+
+.shell {
+  position: relative;
+  z-index: 1;
+  width: min(1440px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 18px 0 64px;
+}
+
+.topbar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  min-height: 56px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.brand {
+  display: inline-grid;
+  grid-template-columns: 26px auto;
+  align-items: center;
+  gap: 10px;
+  justify-self: start;
+  color: var(--text-strong);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.brand-mark {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(45, 212, 191, 0.52);
+  border-radius: 6px;
+  color: var(--accent);
+  background: rgba(45, 212, 191, 0.08);
+}
+
+.brand-mark::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border: 2px solid currentColor;
+  border-left-color: transparent;
+  transform: rotate(45deg);
+}
+
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  justify-self: center;
+  font-size: 13px;
+}
+
+.nav-links a {
+  padding: 9px 12px;
+  border-radius: 6px;
+  transition: color 180ms var(--ease), background 180ms var(--ease);
+}
+
+.nav-links a:hover {
+  color: var(--text-strong);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.status-chip {
+  justify-self: end;
+  display: inline-grid;
+  grid-template-columns: 8px auto;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  background: rgba(12, 18, 24, 0.72);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+.state-dot.ok {
+  background: var(--ok);
+  box-shadow: 0 0 16px rgba(67, 209, 141, 0.38);
+}
+
+.state-dot.err {
+  background: var(--err);
+  box-shadow: 0 0 16px rgba(255, 111, 115, 0.36);
+}
+
+main {
+  overflow-x: hidden;
+}
+
+.hero {
+  min-height: calc(100dvh - 90px);
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(460px, 1.08fr);
+  gap: 22px;
+  align-items: stretch;
+  padding: 34px 0 46px;
+}
+
+.hero-copy {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 34px;
+  padding: 28px 0 8px;
+}
+
+.hero-copy h1 {
+  max-width: 11ch;
+  margin: 0;
+  color: var(--text-strong);
+  font-family: var(--display);
+  font-size: clamp(4.1rem, 7.4vw, 8.8rem);
+  line-height: 0.86;
+  letter-spacing: 0;
+  text-wrap: balance;
+}
+
+.hero-copy p {
+  max-width: 61ch;
+  margin: 22px 0 0;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1.66;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 26px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  gap: 10px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: var(--text-strong);
+  color: #06100f;
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 14px;
+  transition: transform 220ms var(--ease), background 220ms var(--ease), border-color 220ms var(--ease), color 220ms var(--ease);
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+}
+
+.btn:active {
+  transform: translateY(1px) scale(0.99);
+}
+
+.btn-secondary {
+  border-color: var(--line);
+  background: #0b1117;
+  color: var(--text);
+}
+
+.btn-secondary:hover {
+  border-color: rgba(45, 212, 191, 0.45);
+  color: var(--text-strong);
+}
+
+.btn-small {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.btn-icon {
+  width: 17px;
+  height: 17px;
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.btn-icon::before,
+.btn-icon::after {
+  content: "";
+  position: absolute;
+  background: currentColor;
+}
+
+.btn-icon::before {
+  width: 13px;
+  height: 2px;
+  top: 7px;
+  left: 1px;
+}
+
+.btn-icon::after {
+  width: 8px;
+  height: 8px;
+  top: 4px;
+  right: 1px;
+  border-top: 2px solid currentColor;
+  border-right: 2px solid currentColor;
+  background: transparent;
+  transform: rotate(45deg);
+}
+
+.hero-proof {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.proof-item {
+  padding: 16px 16px 18px 0;
+  border-right: 1px solid var(--line);
+}
+
+.proof-item + .proof-item {
+  padding-left: 16px;
+}
+
+.proof-item:last-child {
+  border-right: 0;
+}
+
+.proof-item strong {
+  display: block;
+  color: var(--text-strong);
+  font-family: var(--mono);
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+}
+
+.proof-item span {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.console {
+  align-self: stretch;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 10rem),
+    rgba(12, 18, 24, 0.94);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.console-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 13px 15px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.console-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.console-tab {
+  padding: 5px 8px;
+  border-radius: 5px;
+  color: var(--text);
+  background: rgba(45, 212, 191, 0.08);
+}
+
+.console-body {
+  display: grid;
+  grid-template-columns: 0.86fr 1.14fr;
+  min-height: 590px;
+}
+
+.metric-column {
+  border-right: 1px solid var(--line);
+  padding: 16px;
+}
+
+.metric-list {
+  display: grid;
+  gap: 10px;
+}
+
+.metric-card {
+  padding: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.metric-label {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.metric-value {
+  margin-top: 6px;
+  color: var(--text-strong);
+  font-family: var(--mono);
+  font-size: clamp(1.7rem, 3vw, 2.7rem);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-note {
+  margin-top: 8px;
+  color: var(--muted-2);
+  font-size: 12px;
+}
+
+.policy-strip {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.policy-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(139, 164, 171, 0.12);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.policy-row span:first-child {
+  color: var(--muted);
+}
+
+.policy-row span:last-child {
+  color: var(--text);
+}
+
+.live-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+}
+
+.request-lab {
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.lab-grid {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.field,
+.field-wide {
+  min-width: 0;
+}
+
+.field-wide {
+  grid-column: 1 / -1;
+}
+
+label {
+  display: block;
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+select,
+input,
+textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #070c11;
+  color: var(--text);
+  padding: 10px 11px;
+  font-size: 13px;
+  transition: border-color 180ms var(--ease), background 180ms var(--ease);
+}
+
+textarea {
+  min-height: 82px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+select:focus,
+input:focus,
+textarea:focus {
+  border-color: rgba(45, 212, 191, 0.58);
+  background: #081015;
+}
+
+.lab-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.result-line {
+  min-height: 18px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.log-wrap {
+  min-width: 0;
+  padding: 16px;
+}
+
+.table-head,
+.log-row,
+.backend-row {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.table-head {
+  grid-template-columns: 1fr 0.8fr 0.52fr 0.8fr 0.58fr 1fr;
+  padding: 0 0 8px;
+  color: var(--muted-2);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.log-box {
+  display: grid;
+  gap: 6px;
+}
+
+.log-row {
+  grid-template-columns: 1fr 0.8fr 0.52fr 0.8fr 0.58fr 1fr;
+  padding: 9px 0;
+  border-top: 1px solid rgba(139, 164, 171, 0.13);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.log-row > div,
+.backend-row > div {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-status-200,
+.log-status-201,
+.log-status-204 {
+  color: var(--ok);
+}
+
+.log-status-429,
+.log-status-500,
+.log-status-502,
+.log-status-503 {
+  color: var(--err);
+}
+
+.section {
+  padding: 76px 0;
+  border-top: 1px solid var(--line);
+}
+
+.section-heading {
+  max-width: 820px;
+}
+
+.section-heading h2 {
+  margin: 0;
+  color: var(--text-strong);
+  font-family: var(--display);
+  font-size: clamp(2.4rem, 5vw, 5.6rem);
+  line-height: 0.94;
+  letter-spacing: 0;
+  text-wrap: balance;
+}
+
+.section-heading p {
+  max-width: 66ch;
+  margin: 18px 0 0;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1.7;
+}
+
+.flow-grid {
+  display: grid;
+  grid-template-columns: 0.74fr 1.26fr;
+  gap: 22px;
+  margin-top: 34px;
+}
+
+.flow-map {
+  position: relative;
+  min-height: 470px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(90deg, rgba(139, 164, 171, 0.08) 1px, transparent 1px),
+    linear-gradient(rgba(139, 164, 171, 0.08) 1px, transparent 1px),
+    rgba(12, 18, 24, 0.82);
+  background-size: 32px 32px;
+  overflow: hidden;
+}
+
+.flow-node {
+  position: absolute;
+  width: min(230px, 42%);
+  padding: 13px;
+  border: 1px solid rgba(45, 212, 191, 0.36);
+  border-radius: var(--radius);
+  background: rgba(5, 9, 13, 0.88);
+}
+
+.flow-node strong {
+  display: block;
+  color: var(--text-strong);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.flow-node span {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.node-client { left: 7%; top: 10%; }
+.node-limit { right: 8%; top: 21%; }
+.node-route { left: 16%; bottom: 26%; }
+.node-backend { right: 10%; bottom: 11%; }
+
+.flow-line {
+  position: absolute;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: 0.72;
+  transform-origin: left center;
+}
+
+.line-a { left: 31%; top: 23%; width: 34%; transform: rotate(12deg); }
+.line-b { left: 54%; top: 43%; width: 24%; transform: rotate(94deg); }
+.line-c { left: 34%; top: 66%; width: 34%; transform: rotate(-12deg); }
+
+.capability-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.capability {
+  min-height: 142px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(12, 18, 24, 0.76);
+}
+
+.capability strong {
+  color: var(--text-strong);
+  font-size: 18px;
+}
+
+.capability p {
+  margin: 10px 0 0;
+  color: var(--muted);
+  line-height: 1.58;
+  font-size: 14px;
+}
+
+.operations {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(330px, 0.65fr);
+  gap: 22px;
+  margin-top: 34px;
+}
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(12, 18, 24, 0.82);
+  overflow: hidden;
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-strong);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.backend-table {
+  display: grid;
+}
+
+.backend-row {
+  grid-template-columns: minmax(170px, 1.25fr) 0.72fr 0.58fr 0.58fr 0.72fr;
+  padding: 13px 16px;
+  border-bottom: 1px solid rgba(139, 164, 171, 0.12);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.backend-row:last-child {
+  border-bottom: 0;
+}
+
+.row-title {
+  color: var(--text);
+}
+
+.row-meta {
+  margin-top: 4px;
+  color: var(--muted-2);
+  font-size: 11px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.025);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.pill.ok {
+  border-color: rgba(67, 209, 141, 0.34);
+  color: var(--ok);
+}
+
+.pill.warn {
+  border-color: rgba(255, 184, 107, 0.34);
+  color: var(--warn);
+}
+
+.pill.err {
+  border-color: rgba(255, 111, 115, 0.34);
+  color: var(--err);
+}
+
+.ops-card {
+  padding: 16px;
+}
+
+.ops-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.ops-result {
+  min-height: 18px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.terminal {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #05080b;
+  color: #a9f5e9;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.setup {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 22px;
+  margin-top: 34px;
+}
+
+.setup-steps {
+  display: grid;
+  gap: 10px;
+}
+
+.step {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 14px;
+  padding: 15px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.step-index {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.step strong {
+  color: var(--text-strong);
+}
+
+.step p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.58;
+}
+
+.code-block {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #05080b;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.85;
+  overflow-x: auto;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.code-block .muted {
+  color: var(--muted-2);
+}
+
+.footer {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 22px;
+  align-items: end;
+  padding-top: 44px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.footer strong {
+  display: block;
+  color: var(--text-strong);
+  font-family: var(--display);
+  font-size: clamp(2.2rem, 4vw, 4.6rem);
+  line-height: 0.96;
+}
+
+.footer p {
+  max-width: 58ch;
+  margin: 14px 0 0;
+  line-height: 1.65;
+}
+
+.footer-links {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 720ms var(--ease), transform 720ms var(--ease);
+}
+
+.reveal.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (max-width: 1120px) {
+  .hero,
+  .flow-grid,
+  .operations,
+  .setup {
+    grid-template-columns: 1fr;
+  }
+
+  .hero {
+    min-height: auto;
+  }
+
+  .console-body {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-column {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .metric-list {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 820px) {
+  .shell {
+    width: min(100% - 24px, 720px);
+  }
+
+  .topbar {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding-bottom: 14px;
+  }
+
+  .brand,
+  .nav-links,
+  .status-chip {
+    justify-self: start;
+  }
+
+  .nav-links {
+    width: 100%;
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  .hero-copy h1 {
+    max-width: 100%;
+    font-size: clamp(3.4rem, 16vw, 5.2rem);
+  }
+
+  .hero-proof,
+  .metric-list,
+  .capability-list {
+    grid-template-columns: 1fr;
+  }
+
+  .proof-item,
+  .proof-item + .proof-item {
+    padding: 14px 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .proof-item:last-child {
+    border-bottom: 0;
+  }
+
+  .console-body {
+    min-height: auto;
+  }
+
+  .lab-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .table-head {
+    display: none;
+  }
+
+  .log-row {
+    grid-template-columns: 0.9fr 0.56fr 0.56fr;
+  }
+
+  .log-row div:nth-child(2),
+  .log-row div:nth-child(4),
+  .log-row div:nth-child(6) {
+    display: none;
+  }
+
+  .backend-row {
+    grid-template-columns: 1fr 0.8fr;
+  }
+
+  .backend-row div:nth-child(3),
+  .backend-row div:nth-child(4) {
+    display: none;
+  }
+
+  .flow-map {
+    min-height: 540px;
+  }
+
+  .flow-node {
+    width: 78%;
+  }
+
+  .node-client { left: 8%; top: 7%; }
+  .node-limit { left: 16%; top: 29%; }
+  .node-route { left: 8%; bottom: 29%; }
+  .node-backend { left: 16%; bottom: 6%; }
+
+  .flow-line {
+    display: none;
+  }
+
+  .footer {
+    grid-template-columns: 1fr;
+  }
+
+  .footer-links {
+    justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+  }
+
+  .reveal {
+    opacity: 1;
+    transform: none;
+  }
 }
 </style>
 </head>
 <body>
+<a class="skip-link" href="#main">Skip to content</a>
 <div class="shell">
-  <div class="hdr">
-    <div class="dot" id="dot"></div>
-    <span class="hdr-title">edge-proxy</span>
-    <span class="hdr-sub" id="status-text">connecting…</span>
-  </div>
-
-  <div class="stats-row">
-    <div class="stat"><div class="stat-lbl">total requests</div><div class="stat-val" id="s-total">—</div></div>
-    <div class="stat"><div class="stat-lbl">rate limited (429)</div><div class="stat-val" id="s-429" style="color:var(--red)">—</div></div>
-    <div class="stat"><div class="stat-lbl">active conns</div><div class="stat-val" id="s-conns">—</div></div>
-    <div class="stat"><div class="stat-lbl">rate limit</div><div class="stat-val" id="s-ratelimit" style="color:var(--green);font-size:18px">—</div></div>
-  </div>
-
-  <div class="mid">
-    <div class="panel">
-      <div class="panel-lbl">per-ip count (sliding window)</div>
-      <div id="ip-bars"><div class="no-data">awaiting data…</div></div>
+  <header class="topbar" aria-label="Primary navigation">
+    <a class="brand" href="#main" aria-label="edge-proxy home">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span>edge-proxy</span>
+    </a>
+    <nav class="nav-links" aria-label="Page sections">
+      <a href="#gateway">Gateway</a>
+      <a href="#backends">Backends</a>
+      <a href="#setup">Setup</a>
+      <a href="/metrics">Metrics</a>
+      <a href="/stats">JSON</a>
+    </nav>
+    <div class="status-chip" aria-live="polite">
+      <span class="state-dot" id="signal" aria-hidden="true"></span>
+      <span id="status-text">connecting</span>
     </div>
-    <div class="panel">
-      <div class="panel-lbl">requests / sec (last 24s)</div>
-      <div class="spark-wrap" id="sparkline"></div>
-    </div>
-  </div>
+  </header>
 
-  <div class="panel" style="margin-bottom:12px">
-    <div class="panel-lbl">backends</div>
-    <div id="be-list"><div class="no-data">awaiting data…</div></div>
-  </div>
+  <main id="main">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-copy reveal visible">
+        <div>
+          <h1 id="hero-title">Hackable Go edge control</h1>
+          <p>Run a small reverse proxy you can read end to end, with Redis-backed rate limits, backend health, circuit breakers, runtime reloads, and request visibility built in.</p>
+          <div class="actions" aria-label="Primary actions">
+            <a class="btn" href="#gateway"><span>Open dashboard</span><span class="btn-icon" aria-hidden="true"></span></a>
+            <a class="btn btn-secondary" href="https://github.com/ArkaPrabhaChowdhury/edge-proxy-go"><span>View source</span><span class="btn-icon" aria-hidden="true"></span></a>
+          </div>
+        </div>
+        <div class="hero-proof" aria-label="Live gateway summary">
+          <div class="proof-item">
+            <strong id="metric-total">-</strong>
+            <span>requests observed by this process</span>
+          </div>
+          <div class="proof-item">
+            <strong id="metric-limited">-</strong>
+            <span>requests limited or blocked</span>
+          </div>
+          <div class="proof-item">
+            <strong id="metric-available">-</strong>
+            <span>eligible backends in rotation</span>
+          </div>
+        </div>
+      </div>
 
-  <div class="panel" style="margin-bottom:12px">
-    <div class="panel-lbl">send request to proxy</div>
-    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      <select id="req-method" style="font-size:11px;font-family:inherit;background:var(--surface3);color:var(--text);border:0.5px solid var(--border);border-radius:var(--r);padding:5px 8px;cursor:pointer">
-        <option>GET</option>
-        <option>POST</option>
-      </select>
-      <select id="req-path" style="font-size:11px;font-family:inherit;background:var(--surface3);color:var(--text);border:0.5px solid var(--border);border-radius:var(--r);padding:5px 8px;cursor:pointer">
-        <option>/hello</option>
-        <option>/home</option>
-        <option>/api/data</option>
-      </select>
-      <button id="send-btn" onclick="sendRequest()" style="font-size:11px;font-family:inherit;background:transparent;color:var(--text);border:0.5px solid var(--border);border-radius:var(--r);padding:5px 14px;cursor:pointer">send</button>
-      <button onclick="sendBurst()" style="font-size:11px;font-family:inherit;background:transparent;color:var(--amber);border:0.5px solid rgba(239,159,39,0.35);border-radius:var(--r);padding:5px 14px;cursor:pointer">burst x8</button>
-      <span id="req-result" style="font-size:11px;color:var(--hint);margin-left:4px"></span>
-    </div>
-  </div>
+      <div class="console reveal visible" id="gateway">
+        <div class="console-top">
+          <div class="console-tabs">
+            <span class="console-tab">Live gateway</span>
+            <span>/stats</span>
+          </div>
+          <span>poll 1500ms</span>
+        </div>
+        <div class="console-body">
+          <aside class="metric-column" aria-label="Gateway metrics and policy">
+            <div class="metric-list">
+              <div class="metric-card">
+                <div class="metric-label">active connections</div>
+                <div class="metric-value" id="metric-active">-</div>
+                <div class="metric-note">currently open proxy connections</div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-label">total requests</div>
+                <div class="metric-value" id="metric-total-side">-</div>
+                <div class="metric-note">includes proxied and limited traffic</div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-label">limited requests</div>
+                <div class="metric-value" id="metric-limited-side">-</div>
+                <div class="metric-note">throttled or blocked decisions</div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-label">available backends</div>
+                <div class="metric-value" id="metric-available-side">-</div>
+                <div class="metric-note">healthy and not disabled</div>
+              </div>
+            </div>
+            <div class="policy-strip" aria-label="Rate limit policy">
+              <div class="policy-row"><span>identifier</span><span id="policy-header">-</span></div>
+              <div class="policy-row"><span>base rps</span><span id="policy-rps">-</span></div>
+              <div class="policy-row"><span>burst</span><span id="policy-burst">-</span></div>
+              <div class="policy-row"><span>block seconds</span><span id="policy-block">-</span></div>
+              <div class="policy-row"><span>redis</span><span id="policy-redis">-</span></div>
+            </div>
+          </aside>
 
-  <div class="panel">
-    <div class="panel-lbl">access log</div>
-    <div class="log-scroll" id="log-box"></div>
-  </div>
+          <section class="live-panel" aria-label="Request lab and access log">
+            <div class="request-lab">
+              <div class="lab-grid">
+                <div class="field">
+                  <label for="req-method">method</label>
+                  <select id="req-method">
+                    <option>GET</option>
+                    <option>POST</option>
+                    <option>PUT</option>
+                    <option>DELETE</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="req-path">path</label>
+                  <input id="req-path" value="/hello" autocomplete="off">
+                </div>
+                <div class="field-wide">
+                  <label for="req-api-key">api key header</label>
+                  <input id="req-api-key" value="gold-key" autocomplete="off">
+                </div>
+                <div class="field-wide">
+                  <label for="req-body">json body</label>
+                  <textarea id="req-body">{ "demo": true }</textarea>
+                </div>
+              </div>
+              <div class="lab-actions">
+                <button class="btn btn-small" id="send-btn" type="button">Send request</button>
+                <button class="btn btn-secondary btn-small" id="burst-btn" type="button">Run burst</button>
+                <span class="result-line" id="req-result" aria-live="polite">idle</span>
+              </div>
+            </div>
+
+            <div class="log-wrap">
+              <div class="table-head" aria-hidden="true">
+                <span>request</span><span>policy</span><span>status</span><span>backend</span><span>latency</span><span>path</span>
+              </div>
+              <div class="log-box" id="log-box" aria-live="polite">
+                <div class="log-row"><div>No request data yet</div></div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <section class="section reveal" aria-labelledby="architecture-title">
+      <div class="section-heading">
+        <h2 id="architecture-title">A proxy small enough to change during an incident</h2>
+        <p>The project keeps the core routing path in Go code: parse the request, resolve policy, evaluate the limiter, select a backend, forward upstream, and record what happened.</p>
+      </div>
+      <div class="flow-grid">
+        <div class="flow-map" aria-label="Gateway request flow">
+          <div class="flow-line line-a"></div>
+          <div class="flow-line line-b"></div>
+          <div class="flow-line line-c"></div>
+          <div class="flow-node node-client">
+            <strong>client request</strong>
+            <span>request id, forwarded headers, route and method are captured at ingress.</span>
+          </div>
+          <div class="flow-node node-limit">
+            <strong>rate policy</strong>
+            <span>default and route/API-key policies resolve before backend selection.</span>
+          </div>
+          <div class="flow-node node-route">
+            <strong>backend pool</strong>
+            <span>load, latency, health, drain state, and breaker state affect routing.</span>
+          </div>
+          <div class="flow-node node-backend">
+            <strong>upstream service</strong>
+            <span>responses return with propagated request ids and structured logs.</span>
+          </div>
+        </div>
+        <div class="capability-list">
+          <article class="capability">
+            <strong>Adaptive routing</strong>
+            <p>Backend choice accounts for in-flight load and observed latency instead of only rotating through a list.</p>
+          </article>
+          <article class="capability">
+            <strong>Abuse control</strong>
+            <p>Redis stores sliding-window state, repeated abuse, throttle events, and temporary block decisions.</p>
+          </article>
+          <article class="capability">
+            <strong>Runtime operations</strong>
+            <p>Drain, disable, enable, inspect, and reload the parts that can safely change without restarting the proxy.</p>
+          </article>
+          <article class="capability">
+            <strong>Traceable requests</strong>
+            <p>Every request can carry an ID, access log record, Prometheus metrics, and optional OTLP trace context.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section reveal" id="backends" aria-labelledby="backends-title">
+      <div class="section-heading">
+        <h2 id="backends-title">Backend state stays visible and controllable</h2>
+        <p>Use the dashboard to inspect backend health, breaker state, load, errors, and latency, then change rotation state without shell access.</p>
+      </div>
+      <div class="operations">
+        <div class="panel">
+          <div class="panel-title">
+            <span>Backends</span>
+            <span id="backend-count">0 configured</span>
+          </div>
+          <div class="backend-table" id="status-table" aria-live="polite">
+            <div class="backend-row"><div>No backends configured</div></div>
+          </div>
+        </div>
+        <aside class="panel ops-card" aria-label="Backend operations">
+          <div class="ops-stack">
+            <div>
+              <label for="backend-select">backend</label>
+              <select id="backend-select"></select>
+            </div>
+            <div>
+              <label for="backend-action">action</label>
+              <select id="backend-action">
+                <option value="drain">drain</option>
+                <option value="disable">disable</option>
+                <option value="enable">enable</option>
+              </select>
+            </div>
+            <button class="btn btn-small" id="backend-action-btn" type="button">Apply action</button>
+            <button class="btn btn-secondary btn-small" id="reload-btn" type="button">Reload config</button>
+            <div class="ops-result" id="ops-result" aria-live="polite">ready</div>
+          </div>
+          <div class="terminal" id="cli-snippet">curl http://localhost:8081/-/backends</div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="section reveal" id="setup" aria-labelledby="setup-title">
+      <div class="section-heading">
+        <h2 id="setup-title">Clone it when a large gateway would slow you down</h2>
+        <p>Use it as a local abuse-control sandbox, a readable side-project edge layer, or a place to prototype gateway behavior before moving to heavier infrastructure.</p>
+      </div>
+      <div class="setup">
+        <div class="setup-steps">
+          <div class="step">
+            <div class="step-index">01</div>
+            <div>
+              <strong>Start the full local stack</strong>
+              <p>Docker Compose runs Redis, the proxy, the dashboard, and demo backends.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-index">02</div>
+            <div>
+              <strong>Send traffic through the proxy</strong>
+              <p>Try normal requests, bursts, route-specific policies, and API-key behavior.</p>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-index">03</div>
+            <div>
+              <strong>Inspect what changed</strong>
+              <p>Watch request totals, limited traffic, backend eligibility, and access logs update live.</p>
+            </div>
+          </div>
+        </div>
+        <pre class="code-block" aria-label="Local setup commands"><code>git clone https://github.com/ArkaPrabhaChowdhury/edge-proxy-go
+cd edge-proxy-go
+docker compose up --build
+
+<span class="muted"># proxy</span>
+curl http://localhost:8080/hello
+
+<span class="muted"># dashboard</span>
+open http://localhost:8081
+
+<span class="muted"># runtime reload</span>
+curl -X POST http://localhost:8081/-/reload</code></pre>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div>
+        <strong>Readable edge logic for teams that need control.</strong>
+        <p>MIT licensed, pure Go, Redis-backed, Docker-ready, with Kubernetes examples and a starter Helm chart in the repo.</p>
+      </div>
+      <div class="footer-links">
+        <a class="btn btn-secondary btn-small" href="/metrics">Metrics</a>
+        <a class="btn btn-secondary btn-small" href="/stats">Stats JSON</a>
+        <a class="btn btn-small" href="https://github.com/ArkaPrabhaChowdhury/edge-proxy-go">GitHub</a>
+      </div>
+    </footer>
+  </main>
 </div>
+
 <script>
-const STATS_URL = '/stats';
+const STATS_URL = "/stats";
+const BACKENDS_URL = "/-/backends";
+const RELOAD_URL = "/-/reload";
 
-let LIMIT  = 5;   // updated dynamically from stats response
-let sparkData = Array(24).fill(0);
-let prevTotal = 0;
-let seenKeys  = new Set();
+const elements = {
+  signal: document.getElementById("signal"),
+  statusText: document.getElementById("status-text"),
+  metricTotal: document.getElementById("metric-total"),
+  metricLimited: document.getElementById("metric-limited"),
+  metricAvailable: document.getElementById("metric-available"),
+  metricTotalSide: document.getElementById("metric-total-side"),
+  metricLimitedSide: document.getElementById("metric-limited-side"),
+  metricActive: document.getElementById("metric-active"),
+  metricAvailableSide: document.getElementById("metric-available-side"),
+  policyHeader: document.getElementById("policy-header"),
+  policyRps: document.getElementById("policy-rps"),
+  policyBurst: document.getElementById("policy-burst"),
+  policyBlock: document.getElementById("policy-block"),
+  policyRedis: document.getElementById("policy-redis"),
+  reqMethod: document.getElementById("req-method"),
+  reqPath: document.getElementById("req-path"),
+  reqApiKey: document.getElementById("req-api-key"),
+  reqBody: document.getElementById("req-body"),
+  reqResult: document.getElementById("req-result"),
+  sendBtn: document.getElementById("send-btn"),
+  burstBtn: document.getElementById("burst-btn"),
+  backendCount: document.getElementById("backend-count"),
+  backendSelect: document.getElementById("backend-select"),
+  backendAction: document.getElementById("backend-action"),
+  backendActionBtn: document.getElementById("backend-action-btn"),
+  reloadBtn: document.getElementById("reload-btn"),
+  opsResult: document.getElementById("ops-result"),
+  cliSnippet: document.getElementById("cli-snippet"),
+  statusTable: document.getElementById("status-table"),
+  logBox: document.getElementById("log-box")
+};
 
-document.getElementById('sparkline').innerHTML =
-  sparkData.map(() => '<div class="s-bar" style="height:3px"></div>').join('');
+elements.sendBtn.addEventListener("click", sendRequest);
+elements.burstBtn.addEventListener("click", sendBurst);
+elements.backendActionBtn.addEventListener("click", applyBackendAction);
+elements.reloadBtn.addEventListener("click", reloadConfig);
+
+if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add("visible");
+      }
+    });
+  }, { threshold: 0.14 });
+
+  document.querySelectorAll(".reveal").forEach((node) => {
+    observer.observe(node);
+  });
+} else {
+  document.querySelectorAll(".reveal").forEach((node) => {
+    node.classList.add("visible");
+  });
+}
 
 async function poll() {
   try {
-    const res  = await fetch(STATS_URL);
-    const data = await res.json();
-    render(data);
-    setStatus('ok', 'live · ' + new Date().toLocaleTimeString());
-  } catch (e) {
-    setStatus('err', 'cannot reach /stats — check server console');
+    const response = await fetch(STATS_URL, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error("stats unavailable");
+    }
+    const stats = await response.json();
+    renderStats(stats);
+    setStatus("ok", "live | " + new Date().toLocaleTimeString());
+  } catch (error) {
+    setStatus("err", "cannot reach /stats");
   }
 }
 
-setInterval(poll, 1000);
+setInterval(poll, 1500);
 poll();
 
-function render(data) {
-  document.getElementById('s-total').textContent = data.total_requests ?? '—';
-  document.getElementById('s-429').textContent   = data.total_limited  ?? '—';
-  document.getElementById('s-conns').textContent = data.active_conns   ?? '—';
+function renderStats(data) {
+  const backends = Array.isArray(data.backends) ? data.backends : [];
+  const available = backends.filter((backend) => backend.available).length;
+  const total = numberText(data.total_requests);
+  const limited = numberText(data.total_limited);
+  const active = numberText(data.active_conns);
 
-  const rl = data.rate_limit || { requests: 5, window_seconds: 10 };
-  LIMIT = rl.requests;
-  document.getElementById('s-ratelimit').textContent = rl.window_seconds + 's / ' + rl.requests;
+  elements.metricTotal.textContent = total;
+  elements.metricLimited.textContent = limited;
+  elements.metricActive.textContent = active;
+  elements.metricAvailable.textContent = String(available);
+  elements.metricTotalSide.textContent = total;
+  elements.metricLimitedSide.textContent = limited;
+  elements.metricAvailableSide.textContent = String(available);
+  elements.backendCount.textContent = backends.length + " configured";
 
-  renderIPBars(data.ip_counts || {});
-  renderBackends(data.backends || []);
-
-  const delta = (data.total_requests || 0) - prevTotal;
-  prevTotal = data.total_requests || 0;
-  updateSpark(delta);
-
+  updatePolicy(data.rate_limit || {});
+  updateSnippet(data.rate_limit || {});
+  updateBackendSelect(backends);
+  renderBackends(backends);
   renderLog(data.log || []);
 }
 
-// ── IP bars ───────────────────────────────────────────────────────────────────
-function renderIPBars(ipCounts) {
-  const el = document.getElementById('ip-bars');
-  const entries = Object.entries(ipCounts).filter(([,v]) => v > 0);
-  entries.sort((a, b) => b[1] - a[1]);
-  if (!entries.length) {
-    el.innerHTML = '<div class="no-data">no active IPs in window</div>';
-    return;
-  }
-  el.innerHTML = entries.map(([ip, cnt]) => {
-    const pct = Math.min(cnt / LIMIT * 100, 100).toFixed(1);
-    const cls = cnt >= LIMIT ? 'over' : cnt >= Math.ceil(LIMIT * 0.6) ? 'warn' : 'safe';
-    return `<div class="ip-row">
-      <span class="ip-addr">${ip}</span>
-      <div class="bar-track"><div class="bar-fill ${cls}" style="width:${pct}%"></div></div>
-      <span class="ip-count">${cnt}/${LIMIT}</span>
-    </div>`;
-  }).join('');
+function updatePolicy(rateLimit) {
+  elements.policyHeader.textContent = rateLimit.identifier_header || "X-API-Key";
+  elements.policyRps.textContent = floatText(rateLimit.base_requests_per_second);
+  elements.policyBurst.textContent = floatText(rateLimit.burst_capacity);
+  elements.policyBlock.textContent = numberText(rateLimit.block_seconds);
+  elements.policyRedis.textContent = rateLimit.redis_addr || "-";
 }
 
-// ── Backends ──────────────────────────────────────────────────────────────────
+function updateSnippet(rateLimit) {
+  const header = rateLimit.identifier_header || "X-API-Key";
+  const burst = rateLimit.burst_capacity || 0;
+  const rps = rateLimit.base_requests_per_second || 0;
+  elements.cliSnippet.textContent =
+    "curl -H \"" + header + ": gold-key\" http://localhost:8080/api/data\n" +
+    "# base_rps=" + rps + " burst=" + burst + "\n" +
+    "curl http://localhost:8081/-/backends\n" +
+    "curl -X POST http://localhost:8081/-/reload";
+}
+
+function updateBackendSelect(backends) {
+  const current = elements.backendSelect.value;
+  elements.backendSelect.innerHTML = backends.map((backend) =>
+    "<option value=\"" + escapeHtml(backend.address) + "\">" + escapeHtml(backend.address) + "</option>"
+  ).join("");
+  if (current && backends.some((backend) => backend.address === current)) {
+    elements.backendSelect.value = current;
+  }
+}
+
 function renderBackends(backends) {
-  const el = document.getElementById('be-list');
   if (!backends.length) {
-    el.innerHTML = '<div class="no-data">no backends configured</div>';
+    elements.statusTable.innerHTML = "<div class=\"backend-row\"><div>No backends configured</div></div>";
     return;
   }
-  el.innerHTML = backends.map(b => {
-    const cls = b.healthy ? 'up' : 'down';
-    const label = b.healthy ? 'healthy' : 'down';
-    return `<div class="be-row">
-      <div class="be-dot ${cls}"></div>
-      <span class="be-addr">${b.address}</span>
-      <span class="be-badge ${cls}">${label}</span>
-    </div>`;
-  }).join('');
+
+  elements.statusTable.innerHTML = backends.map((backend) => {
+    const pillClass = !backend.healthy
+      ? "err"
+      : backend.disabled
+        ? "err"
+        : backend.draining
+          ? "warn"
+          : backend.available
+            ? "ok"
+            : "warn";
+    const stateLabel = !backend.healthy
+      ? "unhealthy"
+      : backend.disabled
+        ? "disabled"
+        : backend.draining
+          ? "draining"
+          : backend.breaker_state;
+    return (
+      "<div class=\"backend-row\">" +
+        "<div><div class=\"row-title\">" + escapeHtml(backend.address) + "</div><div class=\"row-meta\">breaker=" + escapeHtml(backend.breaker_state) + " | errs=" + numberText(backend.consecutive_errors) + "</div></div>" +
+        "<div><span class=\"pill " + pillClass + "\">" + escapeHtml(stateLabel) + "</span></div>" +
+        "<div><div class=\"row-title\">" + numberText(backend.requests) + "</div><div class=\"row-meta\">requests</div></div>" +
+        "<div><div class=\"row-title\">" + numberText(backend.errors) + "</div><div class=\"row-meta\">errors</div></div>" +
+        "<div><div class=\"row-title\">" + floatText(backend.avg_latency_ms) + " ms</div><div class=\"row-meta\">avg latency</div></div>" +
+      "</div>"
+    );
+  }).join("");
 }
 
-// ── Sparkline ─────────────────────────────────────────────────────────────────
-function updateSpark(delta) {
-  sparkData.push(delta);
-  sparkData.shift();
-  const max = Math.max(...sparkData, 1);
-  document.querySelectorAll('#sparkline .s-bar').forEach((bar, i) => {
-    const h = Math.max(Math.round(sparkData[i] / max * 100), 3);
-    bar.style.height = h + '%';
-    bar.className = 's-bar' + (h > 70 ? ' hot' : '');
-  });
-}
-
-// ── Log ───────────────────────────────────────────────────────────────────────
 function renderLog(entries) {
-  const box = document.getElementById('log-box');
-
-  if (seenKeys.size === 0 && entries.length > 0) {
-    entries.slice(-20).forEach(e => {
-      seenKeys.add(rowKey(e));
-      box.appendChild(makeRow(e));
-    });
-    box.scrollTop = box.scrollHeight;
+  const latest = entries.slice(-20).reverse();
+  if (!latest.length) {
+    elements.logBox.innerHTML = "<div class=\"log-row\"><div>No request data yet</div></div>";
     return;
   }
 
-  entries.forEach(e => {
-    const k = rowKey(e);
-    if (!seenKeys.has(k)) {
-      seenKeys.add(k);
-      box.prepend(makeRow(e));
-    }
-  });
-
-  while (box.children.length > 150) box.removeChild(box.lastChild);
-  if (seenKeys.size > 500) seenKeys = new Set([...seenKeys].slice(-300));
+  elements.logBox.innerHTML = latest.map((entry) => {
+    const statusClass = "log-status-" + String(entry.status || "");
+    return (
+      "<div class=\"log-row\">" +
+        "<div>" + escapeHtml(entry.request_id || "-") + "</div>" +
+        "<div>" + escapeHtml(entry.policy_name || "default") + "</div>" +
+        "<div class=\"" + statusClass + "\">" + numberText(entry.status) + "</div>" +
+        "<div>" + escapeHtml(entry.backend || "-") + "</div>" +
+        "<div>" + numberText(entry.latency_ms) + " ms</div>" +
+        "<div>" + escapeHtml(entry.path || "-") + "</div>" +
+      "</div>"
+    );
+  }).join("");
 }
 
-function rowKey(e) { return e.time + e.ip + e.path + e.status; }
-
-function makeRow(e) {
-  const row = document.createElement('div');
-  row.className = 'log-row';
-  const sc = e.status === 200 ? 'l-200' : e.status === 429 ? 'l-429' : 'l-5xx';
-  row.innerHTML =
-    `<span class="l-ts">${e.time}</span>` +
-    `<span class="l-method">${e.method || '-'}</span>` +
-    `<span class="l-path">${e.path || '-'}</span>` +
-    `<span class="l-backend">${e.backend || '-'}</span>` +
-    `<span class="${sc}">${e.status}</span>` +
-    `<span class="l-ms">${e.latency_ms}ms</span>` +
-    `<span class="l-ip">${e.ip}</span>`;
-  return row;
-}
-
-function setStatus(state, text) {
-  document.getElementById('dot').className = 'dot ' + (state === 'ok' ? 'ok' : 'err');
-  document.getElementById('status-text').textContent = text;
-}
-
-// ── Send request button ───────────────────────────────────────────────────────
 async function sendRequest() {
-  const method = document.getElementById('req-method').value;
-  const path   = document.getElementById('req-path').value;
-  const result = document.getElementById('req-result');
-  const btn    = document.getElementById('send-btn');
-
-  btn.disabled = true;
-  result.style.color = 'var(--hint)';
-  result.textContent = 'sending…';
-
+  elements.sendBtn.disabled = true;
   try {
-    const res = await fetch(path, { method });
-    const ok  = res.status === 200;
-    result.style.color = ok ? 'var(--green)' : 'var(--red)';
-    result.textContent = res.status + ' ' + (ok ? 'OK' : 'Too Many Requests');
+    const headers = {};
+    const apiKey = elements.reqApiKey.value.trim();
+    const method = elements.reqMethod.value;
+    const path = elements.reqPath.value;
+    let body;
+
+    if (apiKey) {
+      headers["X-API-Key"] = apiKey;
+    }
+
+    if (method !== "GET") {
+      headers["Content-Type"] = "application/json";
+      body = elements.reqBody.value.trim() || "{\"demo\":true}";
+    }
+
+    const response = await fetch(path, { method, headers, body });
+    const requestID = response.headers.get("X-Request-Id") || "-";
+    const policy = response.headers.get("X-RateLimit-Policy") || "default";
+    elements.reqResult.textContent = response.status + " | request_id=" + requestID + " | policy=" + policy;
+    elements.reqResult.style.color = response.status >= 400 ? "var(--err)" : "var(--ok)";
     await poll();
-  } catch (e) {
-    result.style.color = 'var(--red)';
-    result.textContent = 'error — proxy unreachable';
+  } catch (error) {
+    elements.reqResult.textContent = "request failed";
+    elements.reqResult.style.color = "var(--err)";
   } finally {
-    btn.disabled = false;
+    elements.sendBtn.disabled = false;
   }
 }
 
 async function sendBurst() {
-  for (let i = 0; i < 8; i++) {
-    await sendRequest();
-    await new Promise(r => setTimeout(r, 80));
+  elements.burstBtn.disabled = true;
+  try {
+    for (let i = 0; i < 8; i += 1) {
+      await sendRequest();
+      await sleep(70);
+    }
+  } finally {
+    elements.burstBtn.disabled = false;
   }
+}
+
+async function applyBackendAction() {
+  const address = elements.backendSelect.value;
+  const action = elements.backendAction.value;
+
+  if (!address) {
+    elements.opsResult.textContent = "no backend selected";
+    elements.opsResult.style.color = "var(--err)";
+    return;
+  }
+
+  elements.backendActionBtn.disabled = true;
+  try {
+    const response = await fetch(BACKENDS_URL + "/" + encodeURIComponent(address), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action })
+    });
+    const text = await response.text();
+    elements.opsResult.textContent = response.ok ? "applied " + action + " to " + address : text;
+    elements.opsResult.style.color = response.ok ? "var(--ok)" : "var(--err)";
+    await poll();
+  } catch (error) {
+    elements.opsResult.textContent = "backend action failed";
+    elements.opsResult.style.color = "var(--err)";
+  } finally {
+    elements.backendActionBtn.disabled = false;
+  }
+}
+
+async function reloadConfig() {
+  elements.reloadBtn.disabled = true;
+  try {
+    const response = await fetch(RELOAD_URL, { method: "POST" });
+    const text = await response.text();
+    elements.opsResult.textContent = response.ok ? "runtime config reloaded" : text;
+    elements.opsResult.style.color = response.ok ? "var(--ok)" : "var(--err)";
+    await poll();
+  } catch (error) {
+    elements.opsResult.textContent = "reload failed";
+    elements.opsResult.style.color = "var(--err)";
+  } finally {
+    elements.reloadBtn.disabled = false;
+  }
+}
+
+function setStatus(mode, text) {
+  elements.signal.className = "state-dot " + (mode === "ok" ? "ok" : "err");
+  elements.statusText.textContent = text;
+}
+
+function numberText(value) {
+  return typeof value === "number" ? value.toLocaleString() : "-";
+}
+
+function floatText(value) {
+  return typeof value === "number" ? value.toFixed(1) : "-";
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("'", "&#39;");
 }
 </script>
 </body>
