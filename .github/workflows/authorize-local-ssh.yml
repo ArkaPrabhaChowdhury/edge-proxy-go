@@ -1,0 +1,27 @@
+name: Authorize local SSH key
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add maintainer public key
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.OCI_HOST }}
+          username: ${{ secrets.OCI_USER }}
+          key: ${{ secrets.OCI_SSH_KEY }}
+          port: ${{ secrets.OCI_PORT || 22 }}
+          script: |
+            set -eu
+            umask 077
+            mkdir -p ~/.ssh
+            touch ~/.ssh/authorized_keys
+            grep -qxF 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINYItR5z1U/8AVm57F4B98CYP/UO6bvvwQXHtmf+XfQ6 arkopra@gmail.com' ~/.ssh/authorized_keys || printf '%s\n' 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINYItR5z1U/8AVm57F4B98CYP/UO6bvvwQXHtmf+XfQ6 arkopra@gmail.com' >> ~/.ssh/authorized_keys
+            chmod 700 ~/.ssh
+            chmod 600 ~/.ssh/authorized_keys
