@@ -6,10 +6,36 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: oracle-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      OCI_HOST: ${{ secrets.OCI_HOST }}
+      OCI_USER: ${{ secrets.OCI_USER }}
+      OCI_SSH_KEY: ${{ secrets.OCI_SSH_KEY }}
+      OCI_PORT: ${{ secrets.OCI_PORT }}
+      OCI_DEPLOY_DIR: ${{ secrets.OCI_DEPLOY_DIR }}
     steps:
+      - name: Validate SSH secrets
+        shell: bash
+        run: |
+          missing=0
+
+          for var in OCI_HOST OCI_USER OCI_SSH_KEY OCI_DEPLOY_DIR; do
+            if [ -z "${!var}" ]; then
+              echo "::error title=Missing secret::GitHub secret '$var' is required for deploy.yml"
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -17,4 +43,24 @@ jobs:
           username: ${{ secrets.OCI_USER }}
           key: ${{ secrets.OCI_SSH_KEY }}
           port: ${{ secrets.OCI_PORT || 22 }}
-          script: ~/deploy-learn-tcp.sh
+          command_timeout: 10m
+          script: |
+            set -eu
+            deploy_dir='${{ secrets.OCI_DEPLOY_DIR }}'
+            repo='https://github.com/ArkaPrabhaChowdhury/edge-proxy-go.git'
+
+            if [ ! -d "$deploy_dir/.git" ]; then
+              mkdir -p "$(dirname "$deploy_dir")"
+              git clone --branch main "$repo" "$deploy_dir"
+            else
+              git -C "$deploy_dir" fetch --prune origin main
+              git -C "$deploy_dir" checkout --force main
+              git -C "$deploy_dir" reset --hard origin/main
+            fi
+
+            cd "$deploy_dir"
+            docker compose up -d --build --remove-orphans
+            docker compose ps
+            curl --fail --silent --show-error --max-time 15 http://127.0.0.1:8081/metrics >/dev/null
+            curl --fail --silent --show-error --max-time 15 https://edge.arkocodes.dev/metrics >/dev/null
+            docker compose ps --format json

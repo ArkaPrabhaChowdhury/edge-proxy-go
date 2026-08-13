@@ -3,11 +3,16 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
-	"net"
+	"net/http"
 	"os"
-	"strings"
+	"time"
+)
+
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
 )
 
 func main() {
@@ -17,54 +22,20 @@ func main() {
 	}
 	port := os.Args[1]
 
-	listener, err := net.Listen("tcp", port)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "listen error:", err)
+	srv := &http.Server{Addr: port, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
+	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	http.HandleFunc("/hello", func(w http.ResponseWriter, _ *http.Request) { _, _ = fmt.Fprintf(w, "Hello from %s", port) })
+	http.HandleFunc("/home", func(w http.ResponseWriter, _ *http.Request) { _, _ = fmt.Fprint(w, "This is the home page") })
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Printf("[%s] %s %s\n", port, r.Method, r.URL.Path)
+		_, _ = fmt.Fprintf(w, "Hello from %s", port)
+	})
+	fmt.Printf("backend listening on %s\n", port)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		fmt.Fprintln(os.Stderr, "server error:", err)
 		os.Exit(1)
 	}
-	defer listener.Close()
-	fmt.Printf("backend listening on %s\n", listener.Addr())
-
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			fmt.Println("accept error:", err)
-			continue
-		}
-		go handle(conn, port)
-	}
-}
-
-func handle(conn net.Conn, port string) {
-	defer conn.Close()
-
-	reader := bufio.NewReader(conn)
-	request, err := reader.ReadString('\n')
-	if err != nil {
-		return
-	}
-
-	parts := strings.Split(request, " ")
-	if len(parts) < 3 {
-		return
-	}
-
-	path := parts[1]
-	fmt.Printf("[%s] %s %s\n", port, strings.TrimSpace(parts[0]), path)
-
-	body := "Hello from " + port
-	switch path {
-	case "/hello":
-		body = "Hey! How are you?"
-	case "/home":
-		body = "This is the home page"
-	}
-
-	fmt.Fprintf(conn,
-		"HTTP/1.1 200 OK\r\n"+
-			"Content-Type: text/plain\r\n"+
-			"Access-Control-Allow-Origin: *\r\n"+
-			"Content-Length: %d\r\n\r\n%s",
-		len(body), body,
-	)
 }

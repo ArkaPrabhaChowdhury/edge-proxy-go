@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edge-proxy-config
+data:
+  config.yaml: |
+    proxy:
+      port: "8080"
+    stats:
+      port: "8081"
+      auth:
+        enabled: false
+        username: "admin"
+        password: "changeme"
+    backends:
+      - "api-1.default.svc.cluster.local:8080"
+      - "api-2.default.svc.cluster.local:8080"
+    rate_limit:
+      name: "default"
+      identifier_header: "X-API-Key"
+      base_requests_per_second: 20
+      burst_capacity: 40
+      block_seconds: 30
+      redis:
+        addr: "redis.default.svc.cluster.local:6379"
+    health_check:
+      enabled: true
+      interval_seconds: 10
+      timeout_seconds: 2
+    tracing:
+      enabled: false
+      service_name: "edge-proxy"
+      endpoint: "http://otel-collector.default.svc.cluster.local:4318"
+      insecure: true
+      sample_ratio: 0.2

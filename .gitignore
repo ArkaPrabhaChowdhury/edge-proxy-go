@@ -2,6 +2,7 @@
 proxy
 backend
 edge-proxy-go
+dist/
 
 # macOS
 .DS_Store

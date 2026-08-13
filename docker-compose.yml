@@ -1,41 +1,54 @@
-version: "3.9"
-
 services:
   proxy:
     build: .
+    command: ["run"]
     ports:
-      - "8080:8080"   # proxy
-      - "8081:8081"   # dashboard + metrics
+      - "${PROXY_HOST_PORT:-8080}:8080"
+      - "${STATS_HOST_PORT:-8081}:8081"
     depends_on:
-      redis: { condition: service_started }
-      backend1: { condition: service_healthy }
-      backend2: { condition: service_healthy }
-      backend3: { condition: service_healthy }
+      redis:
+        condition: service_healthy
+      backend1:
+        condition: service_healthy
+      backend2:
+        condition: service_healthy
+      backend3:
+        condition: service_healthy
     environment:
       - BACKENDS=backend1:9000,backend2:9001,backend3:9002
       - STATS_PORT=8081
       - REDIS_ADDR=redis:6379
-      # Uncomment to enable dashboard password protection:
       # - DASHBOARD_PASS=secret
-      # Uncomment to enable TLS on the proxy port:
       # - TLS_CERT=/certs/cert.pem
       # - TLS_KEY=/certs/key.pem
-    # Mount a custom config file if needed:
-    # volumes:
-    #   - ./config.yaml:/app/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/metrics"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
-    expose: ["6379"]
+    ports:
+      - "${REDIS_HOST_PORT:-6379}:6379"
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
     restart: unless-stopped
 
   backend1:
     build: .
-    command: ["./backend", ":9000"]
-    expose: ["9000"]
+    entrypoint: ["/usr/local/bin/edge-backend"]
+    command: [":9000"]
+    expose:
+      - "9000"
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 9000 || exit 1"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9000/hello"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -43,10 +56,12 @@ services:
 
   backend2:
     build: .
-    command: ["./backend", ":9001"]
-    expose: ["9001"]
+    entrypoint: ["/usr/local/bin/edge-backend"]
+    command: [":9001"]
+    expose:
+      - "9001"
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 9001 || exit 1"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9001/hello"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -54,11 +69,52 @@ services:
 
   backend3:
     build: .
-    command: ["./backend", ":9002"]
-    expose: ["9002"]
+    entrypoint: ["/usr/local/bin/edge-backend"]
+    command: [":9002"]
+    expose:
+      - "9002"
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 9002 || exit 1"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9002/hello"]
       interval: 10s
       timeout: 3s
       retries: 3
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    profiles: [observability]
+    ports:
+      - "${PROMETHEUS_HOST_PORT:-9090}:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      proxy:
+        condition: service_healthy
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    profiles: [observability]
+    ports:
+      - "${GRAFANA_HOST_PORT:-3000}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-change-me-locally}
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_started
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.103.1
+    profiles: [observability]
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    ports:
+      - "${OTEL_GRPC_HOST_PORT:-4317}:4317"
+      - "${OTEL_HTTP_HOST_PORT:-4318}:4318"
+    volumes:
+      - ./observability/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
     restart: unless-stopped

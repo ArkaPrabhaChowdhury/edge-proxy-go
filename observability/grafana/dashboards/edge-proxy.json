@@ -1,0 +1,38 @@
+{
+  "title": "Edge Proxy",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Requests",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "targets": [{"expr": "edgeproxy_requests_total"}]
+    },
+    {
+      "type": "stat",
+      "title": "Rate Limited",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "targets": [{"expr": "edgeproxy_rate_limited_total"}]
+    },
+    {
+      "type": "stat",
+      "title": "Healthy Backends",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "targets": [{"expr": "edgeproxy_healthy_backends"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Backend Average Latency",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 4},
+      "targets": [{"expr": "edgeproxy_backend_average_latency_ms", "legendFormat": "{{backend}}"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Circuit Breaker State",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 12},
+      "targets": [{"expr": "edgeproxy_backend_breaker_state", "legendFormat": "{{backend}}"}]
+    }
+  ]
+}

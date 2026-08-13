@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-proxy
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: edge-proxy
+  template:
+    metadata:
+      labels:
+        app: edge-proxy
+    spec:
+      containers:
+        - name: edge-proxy
+          image: ghcr.io/arkaprabhachowdhury/edge-proxy-go:latest
+          args: ["run", "-config", "/etc/edge-proxy/config.yaml"]
+          env:
+            - name: DASHBOARD_USER
+              valueFrom:
+                secretKeyRef:
+                  name: edge-proxy-auth
+                  key: username
+            - name: DASHBOARD_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: edge-proxy-auth
+                  key: password
+          ports:
+            - name: proxy
+              containerPort: 8080
+            - name: stats
+              containerPort: 8081
+          volumeMounts:
+            - name: config
+              mountPath: /etc/edge-proxy
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: stats
+          readinessProbe:
+            httpGet:
+              path: /stats
+              port: stats
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: edge-proxy-config

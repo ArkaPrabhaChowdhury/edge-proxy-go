@@ -1,0 +1,6 @@
+apiVersion: v2
+name: edge-proxy
+description: Hackable rate-limiting reverse proxy in pure Go
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

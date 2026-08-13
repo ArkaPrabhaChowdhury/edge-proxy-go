@@ -1,5 +1,4 @@
-# ── Build stage ───────────────────────────────────────────────────────────────
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 
@@ -7,22 +6,23 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN go build -o proxy .
-RUN go build -o backend ./cmd/backend/
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/edge-proxy .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/edge-backend ./cmd/backend
 
-# ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM alpine:3.19
 
-# ca-certificates needed for TLS outbound connections
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates wget
 
-WORKDIR /app
+WORKDIR /srv/edge-proxy
 
-COPY --from=builder /app/proxy        ./proxy
-COPY --from=builder /app/backend      ./backend
-COPY dashboard.html                   ./dashboard.html
-COPY config.example.yaml              ./config.example.yaml
+COPY --from=builder /out/edge-proxy /usr/local/bin/edge-proxy
+COPY --from=builder /out/edge-backend /usr/local/bin/edge-backend
+COPY dashboard.html ./dashboard.html
+COPY config.example.yaml ./config.example.yaml
+
+USER 65532:65532
 
 EXPOSE 8080 8081
 
-CMD ["./proxy"]
+ENTRYPOINT ["/usr/local/bin/edge-proxy"]
+CMD ["run"]

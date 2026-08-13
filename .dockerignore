@@ -1,0 +1,11 @@
+.git
+.github
+.vscode
+dist
+proxy
+backend
+server
+main
+config.yaml
+*.pem
+*.log

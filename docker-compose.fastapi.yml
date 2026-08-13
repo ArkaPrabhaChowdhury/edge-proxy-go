@@ -1,0 +1,46 @@
+services:
+  proxy:
+    build: .
+    command: ["run", "-config", "/etc/edge-proxy/config.yaml"]
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    volumes:
+      - ./config.fastapi.yaml:/etc/edge-proxy/config.yaml:ro
+    depends_on:
+      api-1: {condition: service_healthy}
+      api-2: {condition: service_healthy}
+      api-3: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/metrics"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  api-1:
+    build: ./demo/fastapi
+    environment: {INSTANCE: api-1}
+    expose: ["8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 5s
+      timeout: 2s
+      retries: 3
+  api-2:
+    build: ./demo/fastapi
+    environment: {INSTANCE: api-2}
+    expose: ["8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 5s
+      timeout: 2s
+      retries: 3
+  api-3:
+    build: ./demo/fastapi
+    environment: {INSTANCE: api-3}
+    expose: ["8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 5s
+      timeout: 2s
+      retries: 3

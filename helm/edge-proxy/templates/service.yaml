@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app: {{ .Release.Name }}
+  ports:
+    - name: proxy
+      port: {{ .Values.service.port }}
+      targetPort: proxy
+    - name: stats
+      port: {{ .Values.service.statsPort }}
+      targetPort: stats

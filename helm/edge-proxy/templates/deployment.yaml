@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: edge-proxy
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["run", "-config", "/etc/edge-proxy/config.yaml"]
+          env:
+            - name: DASHBOARD_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.authSecretName }}
+                  key: username
+            - name: DASHBOARD_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.authSecretName }}
+                  key: password
+          ports:
+            - name: proxy
+              containerPort: 8080
+            - name: stats
+              containerPort: 8081
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: stats
+          readinessProbe:
+            httpGet:
+              path: /stats
+              port: stats
+          volumeMounts:
+            - name: config
+              mountPath: /etc/edge-proxy
+              readOnly: true
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}-config
